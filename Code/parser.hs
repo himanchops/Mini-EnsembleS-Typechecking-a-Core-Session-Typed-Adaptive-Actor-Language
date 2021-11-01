@@ -101,6 +101,14 @@ data SessionType = SSequence SessionType SessionType
   | STypeIdentifier SessionTypeName
   deriving (Show)
 
+-- Syntactic validity, page 12/30, 3. the choice consists of single wait action #↑ p . S.
+-- parens in action choice
+
+-- consuming newline and indentation, lexeme
+-- case in choice?
+-- explicit actor u follows S {M}, u:S,M
+-- connect label value {actor} role
+
 data TypeAlias = SessionTypeAlias SessionType SessionType deriving (Show)
 data Protocol = Protocol Role SessionType deriving (Show)
 type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)

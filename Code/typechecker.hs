@@ -9,9 +9,11 @@ import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import qualified Data.Text as T
 import qualified Text.Megaparsec.Char.Lexer as L
-
-
 import AST
+
+
+
+
 
 
 {-
@@ -20,16 +22,9 @@ Check Definition :: Definition → TC()
 Check Protocol :: Protocol → TC()
 Check Computation :: SessionType → TypeEnv → SessionType → Computation → TC(Type, SessionType)
 Check Value :: TypeEnv → Value → TC Type
-
-
-SUBTYPING
-Person = (name : String)
-Employee = (name: String, department: String)
-defName :: Person → String
-TypeEnv M:A, A<=B   =>   TypeEnv M:B
 -}
 
--- https://hackage.haskell.org/package/mtl-2.2.2/docs/Control-Monad-Except.html 
+-- https://hackage.haskell.org/package/mtl-2.2.2/docs/Control-Monad-Except.html
 
 
 
@@ -44,7 +39,7 @@ instance Show Error where show (TypeMismatch t1 t2) = ...
 compareTypes :: Type -> Type -> TC Type
 compareTypes Any t = return t
 compareTypes t Any = return t
-compareTypes t1 r2 = if t1 <> t2 then throwError (IncompatibleTypes t1 t2) else return t1
+compareTypes t1 t2 = if t1 <> t2 then throwError (IncompatibleTypes t1 t2) else return t1
 
 ERaise Type 
 
@@ -54,6 +49,13 @@ echo = getLine >>= (\line -> putStrLn line >>= (\() -> return ()))
 
 https://homepages.inf.ed.ac.uk/wadler/papers/marktoberdorf/baastad.pdf
 http://www.dcs.gla.ac.uk/~ornela/projects/Artem%20Usov.pdf
+
+
+
+MONADS
+do e1 ; e2      =        e1 >> e2
+do p <- e1; e2  =        e1 >>= \p -> e2
+
 
 -}
 type TC a = Either Error a
@@ -74,8 +76,6 @@ typeValue typeEnv value = TC Unit
 -- {T} TypeEnv | S ► M : A ◄ S`
 typeComputation :: SessionType -> typeEnv -> SessionType -> Computation -> (Type, SessionType)
 --Actions
-
-
 -- {T} TypeEnv | S ► return <value> : unit ◄ S`
 typeComputation followST typeEnv ST (EAct(EReturn value)) = do
   typeV <- typeValue typeEnv value
@@ -104,6 +104,6 @@ typeComputation followST typeEnv ST (EAct(EDisconnect Role)) = TC (Unit, ST)
 
 
 -- Assignment
-typeComputation followST typeEnv ST (EAssign binder c1 c2) = 
+typeComputation followST typeEnv ST (EAssign binder c1 c2) = do
   let (ty, ST`) = typeComputation followST typeEnv ST in
   let (ty`, ST``) = typeComputation followST ((binder,ty):typeEnv) ST` in (ty`, ST``)
