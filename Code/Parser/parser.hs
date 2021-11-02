@@ -104,10 +104,11 @@ data SessionType = SSequence SessionType SessionType
 -- Syntactic validity, page 12/30, 3. the choice consists of single wait action #↑ p . S.
 -- parens in action choice
 
+-- RecVar vs TypeIdentifier
+-- Change SSequence to [(ActionChoice)]
 -- consuming newline and indentation, lexeme
--- case in choice?
--- explicit actor u follows S {M}, u:S,M
--- connect label value {actor} role
+-- case in choice? can be removed now
+-- connect label value {actor} role. How exactly is it defined? Actor, Value, Role?
 
 data TypeAlias = SessionTypeAlias SessionType SessionType deriving (Show)
 data Protocol = Protocol Role SessionType deriving (Show)
@@ -429,7 +430,7 @@ pUpperCase = (lexeme . try) p
 
 pSRecursionVar :: Parser SessionType
 pSRecursionVar = do
-  recursionVar <- identifier
+  recursionVar <- pUpperCase
   return $ SRecursionVar recursionVar
 
 pSDisconnect :: Parser SessionType
