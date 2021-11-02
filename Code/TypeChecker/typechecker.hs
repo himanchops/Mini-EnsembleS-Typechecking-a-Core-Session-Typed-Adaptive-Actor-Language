@@ -7,7 +7,78 @@ import Control.Monad.Except
 import Data.Text (Text)
 import Data.Void
 import qualified Data.Text as T
-import AST
+import qualified Data.Map as Map
+
+
+
+
+
+
+
+
+type Label = String
+type Role = String
+type Binder = String
+data Choice = SChoice Label EValue Computation deriving (Show)
+type Choices = [Choice]
+type Actor = String
+data ActorDef = EActorDef Actor SessionType Computation deriving (Show)
+data Behaviour = EComp Computation | EStop deriving (Show)
+data Type = EPid SessionType | Unit deriving (Show)
+
+data EValue = VVar String | EUnit deriving (Show)
+data EAction = EReturn EValue
+  | EContinue Label
+  | ERaise
+  | ENew Actor
+  | ESelf
+  | EReplace EValue Behaviour
+  | EDiscover SessionType
+  | EConnect Label EValue EValue Role
+  | EAccept Role Choices
+  | ESend Label EValue Role
+  | EReceive Role Choices
+  | EWait Role
+  | EDisconnect Role
+  deriving (Show)
+data Computation = EAssign Binder Computation Computation
+  | ETry EAction Computation
+  | ERecursion Label Computation
+  | EAct EAction
+  | ESequence Computation Computation
+  deriving (Show)
+
+
+type RecursionVar = String
+type SessionTypeName = String
+data SessionAction = SSend Role Label Type
+  | SConnect Role Label Type
+  | SReceive Role Label Type
+  | SAccept Role Label Type
+  | SWait Role
+  deriving (Show)
+data ActionChoice = SAction SessionAction SessionType deriving (Show)
+data SessionType = SSequence SessionType SessionType
+  | SSingleSession ActionChoice
+  | SRecursion RecursionVar SessionType
+  | SRecursionVar RecursionVar
+  | SDisconnect Role
+  | SEnd
+  | STypeIdentifier SessionTypeName
+  deriving (Show)
+
+data TypeAlias = SessionTypeAlias SessionType SessionType deriving (Show)
+data Protocol = Protocol Role SessionType deriving (Show)
+type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
+
+
+
+
+
+
+
+
+
 
 
 
@@ -53,55 +124,59 @@ The correct solution in C is to pass a 'bundle' of appropriate parameters
 In C++, perl or python you'd very likely make this bundle an object.
 In haskell this bundle will be a data value in some custom type;
 and using Monads you can 'hide the details' of passing it around.
-typeEnv, recEnv
+TypeEnv, RecEnv
 
 -}
 
-type typeEnv = [(String, Type)]
-type recEnv = [(String, SessionType)]
+type TypeEnv = [(String, Type)]
+type RecEnv = [(String, SessionType)]
 
-data Error = UnboundVariable Var
+
+data Error = UnboundVariable String
         | TypeMismatch Type Type
-        | UnboundRecursionVariable Var
-        | RecursionVariableMismatch Var Type Type 
+        | UnboundRecursionVariable String
+        | RecursionVariableMismatch String Type Type 
 -- Different types of errors?
 
 
 instance Show Error where
-  show (UnboundVariable Var) = "Unbounded variable!"
+  show (UnboundVariable value) = "Unbounded variable: " ++ (show value)
 
 type TypeCheck = Either Error
 
 
 
 -- VALUE TYPING
-checkValue :: typeEnv -> EValue -> TypeCheck Type
-checkValue typeEnv (EUnit) = return 1
+checkValue :: TypeEnv -> EValue -> TypeCheck Type
+-- T-UNIT
+checkValue typeEnv (EUnit) = return(Unit)
+
+-- T-VAR
 checkValue typeEnv (VVar value) = do
-  returnType <- Map.lookup value $ Map.fromList map
-  case result of
+  let returnType = Map.lookup value $ Map.fromList typeEnv
+  case returnType of
     Just t -> return(t)
-    Just Nothing -> throwError UnboundVariable value
+    Nothing -> throwError (UnboundVariable value)
 
 
 
-checkComputation :: SessionType -> typeEnv -> recEnv-> SessionType -> Computation -> TypeCheck (Type, SessionType)
+checkComputation :: SessionType -> TypeEnv -> RecEnv-> SessionType -> Computation -> TypeCheck (Type, SessionType)
 -- FUNCTIONAL RULES
 -- T-LET
 checkComputation followST typeEnv recEnv session (EAssign binder c1 c2) = do
-  (ty, session′) <- checkComputation followST typeEnv recEnv session c1
-  (ty′, session′′) <- checkComputation followST ((VVar<$>binder,ty):ty′) recEnv session′ c2
-  return (ty′, session′′)
+  (ty, session') <- checkComputation followST typeEnv recEnv session c1
+  (ty', session'') <- checkComputation followST ((binder,ty):typeEnv) recEnv session' c2
+  return (ty', session'')
 
 -- T-REC
 checkComputation followST typeEnv recEnv session (ERecursion label comp) = do
-  (ty, session′) <- checkComputation followST typeEnv ((label,session):recEnv) session comp
-  return (ty, session′)
+  (ty, session') <- checkComputation followST typeEnv ((label,session):recEnv) session comp
+  return (ty, session')
 
 -- T-CONTINUE
 
 -- T-RETURN
-checkComputation followST typeEnv recEnv session (EAct(EReturn value)) = do
+checkComputation followST typeEnv recEnv session (EAct (EReturn value)) = do
   typeV <- checkValue typeEnv value
   return (typeV, session)
 
@@ -110,10 +185,12 @@ checkComputation followST typeEnv recEnv session (EAct(EReturn value)) = do
 -- explicit actor u follows S {M}, u:S,M?? S=sessionType(u), M=behaviour(u)
 
 -- T-SELF
-checkComputation followST typeEnv recEnv session (EAct(ESelf)) = return (EPid followST, session)
+checkComputation followST typeEnv recEnv session (EAct(ESelf)) = do
+  return (EPid followST, session)
 
 -- T-DISCOVER
-checkComputation followST typeEnv recEnv session (EAct(EDiscover s) = return (EPid s, session)
+-- checkComputation followST typeEnv recEnv session (EAct(EDiscover s) = do
+--   return (EPid s, session)
 
 -- T-REPLACE
 -- Γ ⊢ V :Pid(U), {U} Γ ⊢ κ
@@ -174,3 +251,10 @@ HOW TO MOVE ON TO THE NEXT SESSION AFTER THIS ACTION MANUALLY? BREAK AND FEED NE
    1. Find SessionAction SDisconnect role in session.
    2. Return unit type and end
 -}
+
+
+
+-- main = do
+--   let session = STypeIdentifier <$> "Pinger"
+--   result <- checkComputation session [] [] session (EAct (EReturn "int"))
+--   show result
