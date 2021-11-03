@@ -1,6 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE QuasiQuotes #-}
 
+import Text.RawString.QQ
 import Control.Applicative hiding (some, many)
 import Control.Monad
 import Data.Text (Text)
@@ -17,9 +19,9 @@ type Parser = Parsec Void Text
 
 sc :: Parser ()                  -- Space Consumer
 sc = L.space
-  space1                         -- (2)
-  (L.skipLineComment "//")       -- (3)
-  (L.skipBlockComment "/*" "*/") -- (4)
+  space1
+  (L.skipLineComment "//")
+  (L.skipBlockComment "/*" "*/")
 
 lexeme :: Parser a -> Parser a   -- Trailing space
 lexeme = L.lexeme sc
@@ -101,13 +103,10 @@ data SessionType = SSequence SessionType SessionType
   | STypeIdentifier SessionTypeName
   deriving (Show)
 
--- Syntactic validity, page 12/30, 3. the choice consists of single wait action #↑ p . S.
 -- parens in action choice
-
--- RecVar vs TypeIdentifier
+-- RecVar vs TypeIdentifier - RecVar small-case, typeIdentifier capitalcase
 -- Change SSequence to [(ActionChoice)]
 -- consuming newline and indentation, lexeme
--- case in choice? can be removed now
 -- connect label value {actor} role. How exactly is it defined? Actor, Value, Role?
 
 data TypeAlias = SessionTypeAlias SessionType SessionType deriving (Show)
@@ -202,7 +201,7 @@ pConnect = try $ do
 
 pChoice :: Parser Choice
 pChoice = try $ do
-  reserved "case"
+  -- reserved "case"
   label <- identifier
   value <- parens pValue
   reserved "->"
@@ -213,7 +212,7 @@ pAcceptBraces :: Parser EAction
 pAcceptBraces = try $ do
   reserved "accept from"
   roleName <- identifier
-  choices <- braces $ pMany $ pChoice
+  choices <- braces $ many pChoice
   return $ EAccept roleName choices
 
 
@@ -221,7 +220,7 @@ pReceiveBraces :: Parser EAction
 pReceiveBraces = try $ do
   reserved "receive from"
   roleName <- identifier
-  choices <- braces $ pMany $ pChoice
+  choices <- braces $ many pChoice
   return $ EReceive roleName choices
 
 
@@ -418,7 +417,7 @@ pSessionAction = choice
 pSRecursion :: Parser SessionType
 pSRecursion = try $ do
   reserved "rec"
-  recVar <- pUpperCase
+  recVar <- identifier
   symbol "."
   sessionType <- pSSingleSession
   return $ SRecursion recVar sessionType
@@ -430,7 +429,7 @@ pUpperCase = (lexeme . try) p
 
 pSRecursionVar :: Parser SessionType
 pSRecursionVar = do
-  recursionVar <- pUpperCase
+  recursionVar <- identifier
   return $ SRecursionVar recursionVar
 
 pSDisconnect :: Parser SessionType
@@ -462,7 +461,7 @@ pNonRecSessionType = choice
 pRecSessionType :: Parser SessionType
 pRecSessionType = try $ do
   sessionAction <- pSessionAction
-  reserved "."
+  symbol "."
   singleSessionType <- pSSingleSession
   return $SSingleSession $ SAction sessionAction singleSessionType
 
@@ -501,17 +500,6 @@ pTypeAlias = try $ do
   return $ SessionTypeAlias sessionTypeName session
 
 
-
-pSome :: Parser a -> Parser [a]
-pSome p = do
-  x <- p
-  xs <- many p
-  return (x : xs)
-
-pMany :: Parser a -> Parser [a]
-pMany p = choice [ pSome p, return [] ]
-
-
 pProtocol :: Parser Protocol
 pProtocol = try $ do
   role <- pUpperCase
@@ -526,9 +514,40 @@ pMainComputation = try $ do
   return computation
 
 pProgram :: Parser Program
-pProgram = try $ do
-  typeAliases <- pMany pTypeAlias
-  actorDefs <- pMany pActorDef
-  protocols <- pMany pProtocol
+pProgram = do
+  typeAliases <- many pTypeAlias
+  actorDefs <- many pActorDef
+  protocols <- many pProtocol
   computation <- pMainComputation
   return (typeAliases, actorDefs, protocols, computation)
+
+
+
+main = do
+  let test = [r|type Pinger = Ponger
+  actor PingerActor follows (Ponger !! ping(unit) . Ponger ? pong(unit) . #Ponger . rec browse . Pinger !! pong(unit) . browse) {
+  let pid <= discover Ponger in
+  connect ping(()) to pid as Ponger;
+  receive from Ponger {
+      pong(x) -> wait Ponger
+  }
+}
+
+actor PongerActor follows (Pinger ?? ping(unit) . Pinger ! pong(unit) . ##Ponger) {
+  accept from Pinger {
+      ping(()) ->
+          send pong(()) to Pinger;
+          disconnect from Pinger
+      pong(()) ->
+        raise
+  }
+}
+
+Pinger : Ponger
+
+boot {
+  raise
+}
+
+|]
+  parseTest pProgram test
