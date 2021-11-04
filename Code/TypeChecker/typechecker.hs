@@ -9,13 +9,7 @@ import Data.Void
 import qualified Data.Text as T
 import qualified Data.Map as Map
 
-
-
-
-
-
-
-
+-- import AST?
 type Label = String
 type Role = String
 type Binder = String
@@ -72,20 +66,12 @@ data Protocol = Protocol Role SessionType deriving (Show)
 type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
 
-
-
-
-
-
-
-
-
-
-
 {-
+
+IGNORE, JUST FOR REFERENCE
+
 Check Program :: Program → TC ()
 Check Definition :: Definition → TC()
-Check Protocol :: Protocol → TC()
 Check Computation :: SessionType → TypeEnv → SessionType → Computation → TC(Type, SessionType)
 Check Value :: TypeEnv → Value → TC Type
 -}
@@ -126,6 +112,8 @@ In haskell this bundle will be a data value in some custom type;
 and using Monads you can 'hide the details' of passing it around.
 TypeEnv, RecEnv
 
+https://hackage.haskell.org/package/mtl-2.2.2/docs/Control-Monad-Reader.html
+
 -}
 
 type TypeEnv = [(String, Type)]
@@ -140,7 +128,8 @@ data Error = UnboundVariable String
 
 
 instance Show Error where
-  show (UnboundVariable value) = "Unbounded variable: " ++ (show value)
+  show (UnboundVariable var) = "Unbounded variable: " ++ (show var)
+  show (UnboundRecursionVariable label) = "Unbounded recursion variable at" ++ (show label)
 
 type TypeCheck = Either Error
 
@@ -149,16 +138,18 @@ type TypeCheck = Either Error
 -- VALUE TYPING
 checkValue :: TypeEnv -> EValue -> TypeCheck Type
 -- T-UNIT
-checkValue typeEnv (EUnit) = return(Unit)
+checkValue typeEnv EUnit = return(Unit)
 
 -- T-VAR
-checkValue typeEnv (VVar value) = do
-  let returnType = Map.lookup value $ Map.fromList typeEnv
+checkValue typeEnv (VVar value) =
+  let returnType = Map.lookup value $ Map.fromList typeEnv in
   case returnType of
-    Just t -> return(t)
+    Just t -> return t
     Nothing -> throwError (UnboundVariable value)
 
 
+-- state {followST, typeEnv, recEnv, Protocols, ActorDefs, TypeAliases, session}
+-- checkComputation :: state -> computation -> TypeCheck
 
 checkComputation :: SessionType -> TypeEnv -> RecEnv-> SessionType -> Computation -> TypeCheck (Type, SessionType)
 -- FUNCTIONAL RULES
@@ -174,6 +165,11 @@ checkComputation followST typeEnv recEnv session (ERecursion label comp) = do
   return (ty, session')
 
 -- T-CONTINUE
+checkComputation followST typeEnv recEnv session (EAct (EContinue label)) = do
+  let returnType = Map.lookup label $ Map.fromList recEnv
+  case returnType of
+    Just t -> (Any, t)
+    Nothing -> throwError (UnboundRecursionVariable label)
 
 -- T-RETURN
 checkComputation followST typeEnv recEnv session (EAct (EReturn value)) = do
@@ -182,15 +178,13 @@ checkComputation followST typeEnv recEnv session (EAct (EReturn value)) = do
 
 -- ACTOR / ADAPTATION RULES
 -- T-NEW
--- explicit actor u follows S {M}, u:S,M?? S=sessionType(u), M=behaviour(u)
+-- explicit actor u follows S {M}, u:S,M?? S=sessionType(u), M=behaviour(u), store where? No GLOBAL VARIABLES?
 
 -- T-SELF
-checkComputation followST typeEnv recEnv session (EAct(ESelf)) = do
-  return (EPid followST, session)
+checkComputation followST typeEnv recEnv session (EAct(ESelf)) = return (EPid followST, session)
 
 -- T-DISCOVER
--- checkComputation followST typeEnv recEnv session (EAct(EDiscover s) = do
---   return (EPid s, session)
+checkComputation followST typeEnv recEnv session (EAct(EDiscover s) = return (EPid s, session)
 
 -- T-REPLACE
 -- Γ ⊢ V :Pid(U), {U} Γ ⊢ κ
@@ -213,8 +207,14 @@ checkComputation followST typeEnv recEnv session (EAct(ESelf)) = do
    3. checkValue value2, should match Pid(followST), W:Pid(T)
    4. T = sessionType of role
    5. return 1 and corresponding updated sessionType
+  
+  s = Pinger ?? ping(unit) . Pinger ! pong(unit) . ##Ponger
+  s` = Pinger ! pong(unit) . ##Ponger
+  session
+  
+  action:session'
 
-HOW TO MOVE ON TO THE NEXT SESSION AFTER THIS ACTION MANUALLY? BREAK AND FEED NEXT?
+  HOW TO MOVE ON TO THE NEXT SESSION AFTER THIS ACTION MANUALLY? BREAK AND FEED NEXT?
 -}
 
 -- T-SEND
@@ -251,10 +251,3 @@ HOW TO MOVE ON TO THE NEXT SESSION AFTER THIS ACTION MANUALLY? BREAK AND FEED NE
    1. Find SessionAction SDisconnect role in session.
    2. Return unit type and end
 -}
-
-
-
--- main = do
---   let session = STypeIdentifier <$> "Pinger"
---   result <- checkComputation session [] [] session (EAct (EReturn "int"))
---   show result

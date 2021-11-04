@@ -1,14 +1,19 @@
 type Label = String
-type Role = String
 type Binder = String
-data Choice = SChoice Label EValue Computation deriving (Show)
-type Choices = [Choice]
+type Choices = [(Label, EValue, Computation)]
+type RecursionVar = String
+type SessionTypeName = String
+-- Actor Name
 type Actor = String
-data ActorDef = EActorDef Actor SessionType Computation deriving (Show)
+-- Roles
+type Role = String
+-- Behaviours
 data Behaviour = EComp Computation | EStop deriving (Show)
+-- Types
 data Type = EPid SessionType | Unit deriving (Show)
-
-data EValue = VVar String | EUnit deriving (Show)
+-- Values
+data EValue = EVar String | EUnit deriving (Show)
+-- Actions
 data EAction = EReturn EValue
   | EContinue Label
   | ERaise
@@ -23,32 +28,33 @@ data EAction = EReturn EValue
   | EWait Role
   | EDisconnect Role
   deriving (Show)
+-- Computations
 data Computation = EAssign Binder Computation Computation
   | ETry EAction Computation
   | ERecursion Label Computation
   | EAct EAction
   | ESequence Computation Computation
   deriving (Show)
-
-
-type RecursionVar = String
-type SessionTypeName = String
+-- Session Actions
 data SessionAction = SSend Role Label Type
   | SConnect Role Label Type
   | SReceive Role Label Type
   | SAccept Role Label Type
   | SWait Role
   deriving (Show)
-data ActionChoice = SAction SessionAction SessionType deriving (Show)
-data SessionType = SSequence SessionType SessionType
-  | SSingleSession ActionChoice
+-- SessionTypes
+data SessionType = SAction [(SessionAction, SessionType)]
   | SRecursion RecursionVar SessionType
   | SRecursionVar RecursionVar
   | SDisconnect Role
   | SEnd
   | STypeIdentifier SessionTypeName
   deriving (Show)
-
+-- TypeAlias
 data TypeAlias = SessionTypeAlias SessionType SessionType deriving (Show)
+-- Actor Definition
+data ActorDef = EActorDef Actor SessionType Computation deriving (Show)
+-- Protocol
 data Protocol = Protocol Role SessionType deriving (Show)
+-- Program
 type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
