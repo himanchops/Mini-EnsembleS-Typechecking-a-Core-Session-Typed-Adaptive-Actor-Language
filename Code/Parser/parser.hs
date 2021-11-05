@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-#LANGUAGE ScopedTypeVariables#-}
 
 import Text.RawString.QQ
 import Control.Applicative hiding (some, many)
@@ -11,7 +12,6 @@ import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import qualified Data.Text as T
 import qualified Text.Megaparsec.Char.Lexer as L
-import Data.Char (isUpper)
 
 
 
@@ -51,21 +51,38 @@ parens = between (symbol "(") (symbol ")")
 braces :: Parser a -> Parser a
 braces = between (symbol "{") (symbol "}")
 
+pUpperCase :: Parser String
+pUpperCase = (lexeme . try) p
+  where p = (:) <$> upperChar <*> many alphaNumChar
+
 
 type Label = String
-type Role = String
 type Binder = String
-data Choice = SChoice Label EValue Computation deriving (Show)
-type Choices = [Choice]
+type Choices = [(Label, EValue, Computation)]
+type RecursionVar = String
+type SessionTypeName = String
+-- Actor Name
 type Actor = String
-data ActorDef = EActorDef Actor SessionType Computation deriving (Show)
+-- Roles
+type Role = String
+-- Behaviours
 data Behaviour = EComp Computation | EStop deriving (Show)
-data Type = EPid SessionType | Unit deriving (Show)
-
-data EValue = VVar String | EUnit deriving (Show)
+-- Types
+data Type = EPid SessionType
+  | TString
+  | TInt
+  | TBool
+  | Unit deriving (Show)
+-- Values
+data EValue = EVar String
+  | EInt String
+  | EBool Bool
+  | EUnit
+  deriving (Show)
+-- Actions
 data EAction = EReturn EValue
   | EContinue Label
-  | ERaise
+  | ERaise Type
   | ENew Actor
   | ESelf
   | EReplace EValue Behaviour
@@ -77,69 +94,110 @@ data EAction = EReturn EValue
   | EWait Role
   | EDisconnect Role
   deriving (Show)
+-- Computations
 data Computation = EAssign Binder Computation Computation
   | ETry EAction Computation
   | ERecursion Label Computation
   | EAct EAction
   | ESequence Computation Computation
   deriving (Show)
-
-
-type RecursionVar = String
-type SessionTypeName = String
+-- Session Actions
 data SessionAction = SSend Role Label Type
   | SConnect Role Label Type
   | SReceive Role Label Type
   | SAccept Role Label Type
   | SWait Role
   deriving (Show)
-data ActionChoice = SAction SessionAction SessionType deriving (Show)
-data SessionType = SSequence SessionType SessionType
-  | SSingleSession ActionChoice
+-- SessionTypes
+data SessionType = SAction [(SessionAction, SessionType)]
   | SRecursion RecursionVar SessionType
   | SRecursionVar RecursionVar
   | SDisconnect Role
   | SEnd
   | STypeIdentifier SessionTypeName
   deriving (Show)
-
--- parens in action choice
--- RecVar vs TypeIdentifier - RecVar small-case, typeIdentifier capitalcase
--- Change SSequence to [(ActionChoice)]
--- consuming newline and indentation, lexeme
--- connect label value {actor} role. How exactly is it defined? Actor, Value, Role?
-
+-- TypeAlias
 data TypeAlias = SessionTypeAlias SessionType SessionType deriving (Show)
+-- Actor Definition
+data ActorDef = EActorDef Actor SessionType Computation deriving (Show)
+-- Protocol
 data Protocol = Protocol Role SessionType deriving (Show)
+-- Program
 type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
+
+
+
 pVValue :: Parser EValue
-pVValue = VVar <$> identifier
+pVValue = EVar <$> identifier
+
 
 pVUnit :: Parser EValue
-pVUnit = try $ do
+pVUnit = do
   reserved "()"
   return EUnit
 
+pVInt :: Parser EValue
+pVInt = do
+  int <- many digitChar
+  return $ EInt int
+
+pVBoolTrue :: Parser EValue
+pVBoolTrue = do
+  string' "true" *> notFollowedBy alphaNumChar *> sc
+  return $ EBool True
+
+pVBoolFalse :: Parser EValue
+pVBoolFalse = do
+  string' "false" *> notFollowedBy alphaNumChar *> sc
+  return $ EBool False
+
 pValue :: Parser EValue
-pValue = pVValue <|> pVUnit
+pValue = choice
+  [ pVUnit
+  , pVBoolTrue
+  , pVBoolFalse
+  , pVValue
+  , pVInt
+  ]
+
 
 
 
 pEpid :: Parser Type
-pEpid = try $ do
+pEpid = do
   reserved "Pid"
   sessionType <- parens pSessionType
   return $ EPid sessionType
 
-
 pUnit :: Parser Type
-pUnit = try $ do
-  reserved "unit"
-  return $ Unit
+pUnit = do
+  reserved "Unit"
+  return Unit
+
+pString :: Parser Type
+pString = do
+  reserved "String"
+  return TString
+
+pInt :: Parser Type
+pInt = do
+  reserved "Int"
+  return TInt
+
+pBool :: Parser Type
+pBool = do
+  reserved "Bool"
+  return TBool
 
 pType :: Parser Type
-pType = pEpid <|> pUnit
+pType = choice
+  [ pEpid
+  , pString
+  , pInt
+  , pBool
+  , pUnit
+  ]
 
 
 
@@ -158,7 +216,8 @@ pContinue = try $ do
 pRaise :: Parser EAction
 pRaise = try $ do
   reserved "raise"
-  return ERaise
+  returnType <- between (symbol "[") (symbol "]") pType
+  return $ ERaise returnType
 
 pNew :: Parser EAction
 pNew = try $ do
@@ -179,13 +238,11 @@ pReplace = try $ do
   behaviour <- pBehaviour
   return $ EReplace value behaviour
 
-
 pDiscover :: Parser EAction
 pDiscover = try $ do
   reserved "discover"
   sessionType <- pSTypeIdentifier
   return $ EDiscover sessionType
-
 
 pConnect :: Parser EAction
 pConnect = try $ do
@@ -199,14 +256,13 @@ pConnect = try $ do
   return $ EConnect label vValue wValue roleName
 
 
-pChoice :: Parser Choice
+pChoice :: Parser (Label, EValue, Computation)
 pChoice = try $ do
-  -- reserved "case"
   label <- identifier
   value <- parens pValue
   reserved "->"
   computation <- pComputation
-  return $ SChoice label value computation
+  return (label, value, computation)
 
 pAcceptBraces :: Parser EAction
 pAcceptBraces = try $ do
@@ -215,14 +271,12 @@ pAcceptBraces = try $ do
   choices <- braces $ many pChoice
   return $ EAccept roleName choices
 
-
 pReceiveBraces :: Parser EAction
 pReceiveBraces = try $ do
   reserved "receive from"
   roleName <- identifier
   choices <- braces $ many pChoice
   return $ EReceive roleName choices
-
 
 pReceiveSingle :: Parser EAction
 pReceiveSingle = try $ do
@@ -233,8 +287,7 @@ pReceiveSingle = try $ do
   role <- identifier
   reserved ";"
   computation <- pComputation
-  let choice = [SChoice label value computation]
-  return $ EReceive role choice
+  return $ EReceive role [(label, value, computation)]
 
 pAcceptSingle :: Parser EAction
 pAcceptSingle = try $ do
@@ -245,8 +298,7 @@ pAcceptSingle = try $ do
   role <- identifier
   reserved ";"
   computation <- pComputation
-  let choice = [SChoice label value computation]
-  return $ EAccept role choice
+  return $ EAccept role [(label, value, computation)]
 
 pReceive :: Parser EAction
 pReceive = pReceiveBraces <|> pReceiveSingle
@@ -291,6 +343,7 @@ pAction = choice
   , pReceive
   , pWait
   , pDisconnect ]
+
 
 
 pAssign :: Parser Computation
@@ -361,7 +414,6 @@ pBehaviour = choice
 
 
 
-
 pSSend :: Parser SessionAction
 pSSend = try $ do
   role <- identifier
@@ -410,22 +462,13 @@ pSessionAction = choice
 
 
 
-
-
-
-
 pSRecursion :: Parser SessionType
 pSRecursion = try $ do
   reserved "rec"
   recVar <- identifier
   symbol "."
-  sessionType <- pSSingleSession
+  sessionType <- pSessionType
   return $ SRecursion recVar sessionType
-
-
-pUpperCase :: Parser String
-pUpperCase = (lexeme . try) p
-  where p = (:) <$> upperChar <*> many alphaNumChar
 
 pSRecursionVar :: Parser SessionType
 pSRecursionVar = do
@@ -449,35 +492,39 @@ pSTypeIdentifier = try $ do
   return $ STypeIdentifier sessionTypeName
 
 
-pNonRecSessionType :: Parser SessionType
-pNonRecSessionType = choice 
-  [ pSRecursion
+pSSAction :: Parser (SessionAction, SessionType)
+pSSAction = try $ do
+  sessionAction <- pSessionAction
+  symbol "."
+  sessionType <- pSessionType
+  return (sessionAction, sessionType)
+
+
+plusSep p = p `sepBy1` (symbol "+")
+
+
+pSSingleAction :: Parser SessionType
+pSSingleAction = try $ do
+  actionChoice <- pSSAction
+  return $ SAction [actionChoice]
+
+pSManyActions :: Parser SessionType
+pSManyActions = try $ do
+  actionChoices <- plusSep (parens pSSAction)
+  return $ SAction actionChoices
+
+pSAction :: Parser SessionType
+pSAction = pSManyActions <|> pSSingleAction
+
+
+pSessionType :: Parser SessionType
+pSessionType = choice 
+  [ pSAction
+  , pSRecursion
   , pSTypeIdentifier
   , pSRecursionVar
   , pSDisconnect
-  , pSEnd
-  ]
-
-pRecSessionType :: Parser SessionType
-pRecSessionType = try $ do
-  sessionAction <- pSessionAction
-  symbol "."
-  singleSessionType <- pSSingleSession
-  return $SSingleSession $ SAction sessionAction singleSessionType
-
-pSSingleSession :: Parser SessionType
-pSSingleSession = pRecSessionType <|> pNonRecSessionType
-
-pSSesquence :: Parser SessionType
-pSSesquence = try $ do
-  session1 <- parens pSSingleSession
-  reserved "+"
-  session2 <- parens pSessionType
-  return $ SSequence session1 session2
-
-pSessionType :: Parser SessionType
-pSessionType = pSSesquence <|> pSSingleSession
-
+  , pSEnd ]
 
 
 
@@ -491,6 +538,7 @@ pActorDef = try $ do
   return $ EActorDef actor session computation
 
 
+
 pTypeAlias :: Parser TypeAlias
 pTypeAlias = try $ do
   reserved "type"
@@ -500,6 +548,7 @@ pTypeAlias = try $ do
   return $ SessionTypeAlias sessionTypeName session
 
 
+
 pProtocol :: Parser Protocol
 pProtocol = try $ do
   role <- pUpperCase
@@ -507,11 +556,15 @@ pProtocol = try $ do
   session <- pSessionType
   return $ Protocol role session
 
+
+
 pMainComputation :: Parser Computation
 pMainComputation = try $ do
   reserved "boot"
   computation <- braces pComputation
   return computation
+
+
 
 pProgram :: Parser Program
 pProgram = do
@@ -522,35 +575,43 @@ pProgram = do
   return (typeAliases, actorDefs, protocols, computation)
 
 
-
 main = do
-  let test = [r|type Pinger = Ponger !! ping(unit) . Ponger ? pong(unit) . #Ponger . end
-  actor PingerActor follows (Ponger !! ping(unit) . Ponger ? pong(unit) . #Ponger . rec browse . Pinger !! pong(unit) . browse) {
+  let test = [r|actor PingerActor follows (Ponger !! ping(Bool) . Ponger ? pong(Int) . #Ponger . rec browse . Pinger !! pong(Unit) . browse) {
   let pid <= discover Ponger in
   connect ping(()) to pid as Ponger;
   receive from Ponger {
-      pong(x) -> wait Ponger
-      ping(x) -> raise
+      pong(False) -> wait Ponger
+      ping(x) -> raise[Unit]
   };
   browse ::
-  raise; self;
+  raise[Int]; self;
   continue browse
 }
 
-actor PongerActor follows (Pinger ?? ping(unit) . Pinger ! pong(unit) . ##Ponger) {
+
+
+actor PongerActor follows (Pinger ?? ping(Unit) . Pinger ! pong(Unit) . ##Ponger) {
+  accept from Pinger {
+      ping(True) ->
+          send pong(()) to Pinger;
+          disconnect from Pinger
+      pong(heyy) ->
+        raise[Pid(Session)]
+  }
+}
+
+actor PongerActor follows (Ponger) {
   accept from Pinger {
       ping(()) ->
           send pong(()) to Pinger;
           disconnect from Pinger
-      pong(()) ->
-        raise
+      pong(1234) ->
+        raise[String]
   }
 }
 
-Pinger : Ponger
-
 boot {
-  raise
+  raise[Bool]
 }
 
 |]

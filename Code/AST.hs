@@ -10,13 +10,21 @@ type Role = String
 -- Behaviours
 data Behaviour = EComp Computation | EStop deriving (Show)
 -- Types
-data Type = EPid SessionType | Unit deriving (Show)
+data Type = EPid SessionType
+  | TString
+  | TInt
+  | TBool
+  | Unit deriving (Show)
 -- Values
-data EValue = EVar String | EUnit deriving (Show)
+data EValue = EVar String
+  | EInt String
+  | EBool Bool
+  | EUnit
+  deriving (Show)
 -- Actions
 data EAction = EReturn EValue
   | EContinue Label
-  | ERaise
+  | ERaise Type
   | ENew Actor
   | ESelf
   | EReplace EValue Behaviour
