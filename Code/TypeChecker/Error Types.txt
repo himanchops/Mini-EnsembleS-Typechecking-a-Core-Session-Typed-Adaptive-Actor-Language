@@ -1,0 +1,29 @@
+Error Types
+
+T-VAR
+	UnboundedVarible String
+
+T-LET
+	M fails
+	N with x fails
+
+T-REC
+	RecEnv with l:S fails
+
+
+
+
+
+
+
+T-STOP?
+T-RAISE?
+	Arbitrary return type and postcondition
+
+T-TRY?
+	Comparing t1,t2 && s1,s2, deriving eq, branching
+
+T-CONN
+	Comparing Types, SessionTypes, deriving eq, getSessionType from protocols
+	Comparing actions
+	Unpacking data constructors

@@ -72,10 +72,10 @@ data Type = EPid SessionType
   | TString
   | TInt
   | TBool
-  | Unit deriving (Show)
+  | Unit deriving (Eq,Show)
 -- Values
 data EValue = EVar String
-  | EInt String
+  | EInt Int
   | EBool Bool
   | EUnit
   deriving (Show)
@@ -137,10 +137,12 @@ pVUnit = do
   reserved "()"
   return EUnit
 
+convertInt int = let i = read int :: Int in i
+
 pVInt :: Parser EValue
 pVInt = do
   int <- many digitChar
-  return $ EInt int
+  return $ EInt $ convertInt int
 
 pVBoolTrue :: Parser EValue
 pVBoolTrue = do

@@ -1,6 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
-
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Except
@@ -9,21 +6,33 @@ import Data.Void
 import qualified Data.Text as T
 import qualified Data.Map as Map
 
--- import AST?
 type Label = String
-type Role = String
 type Binder = String
-data Choice = SChoice Label EValue Computation deriving (Show)
-type Choices = [Choice]
+type Choices = [(Label, EValue, Computation)]
+type RecursionVar = String
+type SessionTypeName = String
+-- Actor Name
 type Actor = String
-data ActorDef = EActorDef Actor SessionType Computation deriving (Show)
+-- Roles
+type Role = String
+-- Behaviours
 data Behaviour = EComp Computation | EStop deriving (Show)
-data Type = EPid SessionType | Unit deriving (Show)
-
-data EValue = VVar String | EUnit deriving (Show)
+-- Types
+data Type = EPid SessionType
+  | TString
+  | TInt
+  | TBool
+  | Unit deriving (Eq, Show)
+-- Values
+data EValue = EVar String
+  | EInt Int
+  | EBool Bool
+  | EUnit
+  deriving (Show)
+-- Actions
 data EAction = EReturn EValue
   | EContinue Label
-  | ERaise
+  | ERaise Type
   | ENew Actor
   | ESelf
   | EReplace EValue Behaviour
@@ -35,40 +44,41 @@ data EAction = EReturn EValue
   | EWait Role
   | EDisconnect Role
   deriving (Show)
+-- Computations
 data Computation = EAssign Binder Computation Computation
   | ETry EAction Computation
   | ERecursion Label Computation
   | EAct EAction
   | ESequence Computation Computation
   deriving (Show)
-
-
-type RecursionVar = String
-type SessionTypeName = String
+-- Session Actions
 data SessionAction = SSend Role Label Type
   | SConnect Role Label Type
   | SReceive Role Label Type
   | SAccept Role Label Type
   | SWait Role
   deriving (Show)
-data ActionChoice = SAction SessionAction SessionType deriving (Show)
-data SessionType = SSequence SessionType SessionType
-  | SSingleSession ActionChoice
+-- SessionTypes
+data SessionType = SAction [(SessionAction, SessionType)]
   | SRecursion RecursionVar SessionType
   | SRecursionVar RecursionVar
   | SDisconnect Role
   | SEnd
   | STypeIdentifier SessionTypeName
   deriving (Show)
-
+-- TypeAlias
 data TypeAlias = SessionTypeAlias SessionType SessionType deriving (Show)
+-- Actor Definition
+data ActorDef = EActorDef Actor SessionType Computation deriving (Show)
+-- Protocol
 data Protocol = Protocol Role SessionType deriving (Show)
+-- Program
 type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
 
-{-
 
-IGNORE, JUST FOR REFERENCE
+
+{-
 
 Check Program :: Program → TC ()
 Check Definition :: Definition → TC()
@@ -83,35 +93,9 @@ compareTypes Any t = return t
 compareTypes t Any = return t
 compareTypes t1 t2 = if t1 <> t2 then throwError (IncompatibleTypes t1 t2) else return t1
 
-ERaise Type 
-
-
-echo :: IO () echo = do line <- getLine putStrLn line return () 
-echo = getLine >>= (\line -> putStrLn line >>= (\() -> return ())) 
 
 https://homepages.inf.ed.ac.uk/wadler/papers/marktoberdorf/baastad.pdf
 http://www.dcs.gla.ac.uk/~ornela/projects/Artem%20Usov.pdf
-
-
-MONADS
-do e1 ; e2      =        e1 >> e2
-do p <- e1; e2  =        e1 >>= \p -> e2
-do p <- e1; e2  =   e1 >>= (\v -> case v of p -> e2; _ -> fail "s")
-
-return a >>= k	=	k a
-m >>= return	=	m
-xs >>= return . f	=	fmap f xs
-m >>= (\x -> k x >>= h)	=	(m >>= k) >>= h
-
-If you have a need to store some global state which various of your functions modify,
-then you have a design issue.
-The correct solution in C is to pass a 'bundle' of appropriate parameters
-(you might call it an environment) to those functions which need it.
-In C++, perl or python you'd very likely make this bundle an object.
-In haskell this bundle will be a data value in some custom type;
-and using Monads you can 'hide the details' of passing it around.
-TypeEnv, RecEnv
-
 https://hackage.haskell.org/package/mtl-2.2.2/docs/Control-Monad-Reader.html
 
 -}
@@ -120,19 +104,36 @@ type TypeEnv = [(String, Type)]
 type RecEnv = [(String, SessionType)]
 
 
-data Error = UnboundVariable String
-        | TypeMismatch Type Type
-        | UnboundRecursionVariable String
-        | RecursionVariableMismatch String Type Type 
--- Different types of errors?
+data Record = Record { actorDefs :: [ActorDef]
+  , protocols :: [Protocol]
+  , typeAliases :: [TypeAlias]
+  , followST :: SessionType
+  , typeEnv :: TypeEnv
+  , recEnv :: RecEnv
+  , session :: SessionType
+} deriving (Show)
 
+
+
+data Error = UnboundVariable String
+        | UnboundRecursionVariable String
+        | RecursionVariableMismatch String Type Type
+        | ActorNotDefined String
+        | ValueError Type
+        | TypeMismatch Type Type
+        | SessionMismatch SessionType SessionType
+        | BranchError Role Label
 
 instance Show Error where
   show (UnboundVariable var) = "Unbounded variable: " ++ (show var)
   show (UnboundRecursionVariable label) = "Unbounded recursion variable at" ++ (show label)
-
+  show (ActorNotDefined actor) = "Actor " ++ show actor ++ "is not defined"
+  show (ValueError value) = "Error at value: " ++ show value
+  show (TypeMismatch t1 t2) = "Types: " ++ show t1 ++ " and " ++ show t2 ++ "are not compatible"
+  show (SessionMismatch s1 s2) = "Types: " ++ show s1 ++ " and " ++ show s2 ++ "are not compatible"
+  -- Change to more specific
+  show (BranchError role label) = "SessionAction: " ++ show role ++ show label ++ "does not exists" 
 type TypeCheck = Either Error
-
 
 
 -- VALUE TYPING
@@ -141,81 +142,153 @@ checkValue :: TypeEnv -> EValue -> TypeCheck Type
 checkValue typeEnv EUnit = return(Unit)
 
 -- T-VAR
-checkValue typeEnv (VVar value) =
+checkValue typeEnv (EVar value) =
   let returnType = Map.lookup value $ Map.fromList typeEnv in
   case returnType of
     Just t -> return t
     Nothing -> throwError (UnboundVariable value)
 
+checkValue typeEnv (EInt int) =
+  let returnType = Map.lookup (show int) $ Map.fromList typeEnv in
+  case returnType of
+    Just t -> return t
+    Nothing -> throwError (UnboundVariable $ show int)
 
--- state {followST, typeEnv, recEnv, Protocols, ActorDefs, TypeAliases, session}
--- checkComputation :: state -> computation -> TypeCheck
+checkValue typeEnv (EBool bool) =
+  let returnType = Map.lookup (show bool) $ Map.fromList typeEnv in
+  case returnType of
+    Just t -> return t
+    Nothing -> throwError (UnboundVariable $ show bool)
 
-checkComputation :: SessionType -> TypeEnv -> RecEnv-> SessionType -> Computation -> TypeCheck (Type, SessionType)
+
+
+
+
+-- HELPER FUNCTIONS
+returnSessionType :: [ActorDef] -> Actor -> Maybe SessionType
+returnSessionType [] _ = Nothing
+returnSessionType ((EActorDef a s _):ax) actor =
+  if a == actor
+    then Just s
+  else returnSessionType ax actor
+
+-- let actorDefs = [EActorDef "PingerActor" (SAction [(SConnect "Ponger" "ping" TBool,SAction [(SReceive "Ponger" "pong" TInt,SAction [(SWait "Ponger",SRecursion "browse" (SAction [(SConnect "Pinger" "pong" Unit,SRecursionVar "browse")]))])])]) (EAssign "pid" (EAct (EDiscover (STypeIdentifier "Ponger"))) (ESequence (EAct (EConnect "ping" EUnit (EVar "pid") "Ponger")) (ESequence (EAct (EReceive "Ponger" [("pong",EBool False,EAct (EWait "Ponger")),("ping",EVar "x",EAct (ERaise Unit))])) (ERecursion "browse" (ESequence (EAct (ERaise TInt)) (ESequence (EAct ESelf) (EAct (EContinue "browse")))))))),EActorDef "PongerActor" (SAction [(SAccept "Pinger" "ping" Unit,SAction [(SSend "Pinger" "pong" Unit,SDisconnect "Ponger")])]) (EAct (EAccept "Pinger" [("ping",EBool True,ESequence (EAct (ESend "pong" EUnit "Pinger")) (EAct (EDisconnect "Pinger"))),("pong",EVar "heyy",EAct (ERaise (EPid (STypeIdentifier "Session"))))])),EActorDef "PongerActor" (STypeIdentifier "Ponger") (EAct (EAccept "Pinger" [("ping",EUnit,ESequence (EAct (ESend "pong" EUnit "Pinger")) (EAct (EDisconnect "Pinger"))),("pong",EInt 1234,EAct (ERaise TString))]))]
+
+
+checkBehaviour :: Record -> Behaviour -> TypeCheck (Type, SessionType)
+checkBehaviour record (EStop) = do
+  return (Unit, (session record))
+
+checkBehaviour record (EComp comp) = do
+  (ty, session) <- checkComputation record comp
+  return (ty, session)
+
+
+
+
+
+checkComputation :: Record -> Computation -> TypeCheck (Type, SessionType)
 -- FUNCTIONAL RULES
 -- T-LET
-checkComputation followST typeEnv recEnv session (EAssign binder c1 c2) = do
-  (ty, session') <- checkComputation followST typeEnv recEnv session c1
-  (ty', session'') <- checkComputation followST ((binder,ty):typeEnv) recEnv session' c2
+checkComputation record (EAssign binder c1 c2) = do
+  (ty, session') <- checkComputation record c1
+  (ty', session'') <- checkComputation (record { typeEnv=(binder,ty):(typeEnv record), session=session'}) c2
   return (ty', session'')
 
 -- T-REC
-checkComputation followST typeEnv recEnv session (ERecursion label comp) = do
-  (ty, session') <- checkComputation followST typeEnv ((label,session):recEnv) session comp
+checkComputation record (ERecursion label comp) = do
+  (ty, session') <- checkComputation record {recEnv=((label,(session record)):(recEnv record))  } comp
   return (ty, session')
 
 -- T-CONTINUE
-checkComputation followST typeEnv recEnv session (EAct (EContinue label)) = do
-  let returnType = Map.lookup label $ Map.fromList recEnv
+checkComputation record (EAct (EContinue label)) = do
+  let returnType = Map.lookup label $ Map.fromList (recEnv record)
   case returnType of
-    Just t -> (Any, t)
+    Just t -> return (TString, t)
     Nothing -> throwError (UnboundRecursionVariable label)
 
 -- T-RETURN
-checkComputation followST typeEnv recEnv session (EAct (EReturn value)) = do
-  typeV <- checkValue typeEnv value
-  return (typeV, session)
+checkComputation record (EAct (EReturn value)) = do
+  typeV <- checkValue (typeEnv record) value
+  return (typeV, (session record))
+
+
 
 -- ACTOR / ADAPTATION RULES
 -- T-NEW
--- explicit actor u follows S {M}, u:S,M?? S=sessionType(u), M=behaviour(u), store where? No GLOBAL VARIABLES?
+checkComputation record (EAct (ENew actor)) = do
+  let sessionU = returnSessionType (actorDefs record) actor
+  case sessionU of
+    Just s -> return (EPid s, (session record))
+    Nothing -> throwError (ActorNotDefined actor)
 
 -- T-SELF
-checkComputation followST typeEnv recEnv session (EAct(ESelf)) = return (EPid followST, session)
+checkComputation record (EAct (ESelf)) = do
+  return (EPid (followST record), (session record))
 
 -- T-DISCOVER
-checkComputation followST typeEnv recEnv session (EAct(EDiscover s) = return (EPid s, session)
+checkComputation record (EAct (EDiscover s)) = do
+  return (EPid s, (session record))
 
 -- T-REPLACE
--- Γ ⊢ V :Pid(U), {U} Γ ⊢ κ
--- DOES THIS MEAN EXTEND/UPDATE THE TYPING ENVIRONMENT or CHECK if it exists?
--- 
+checkComputation record (EAct (EReplace value behaviour)) = do
+  typeV <- checkValue (typeEnv record) value
+  case typeV of
+    (EPid sessionU) -> checkBehaviour (record {followST = sessionU}) behaviour
+    _               -> throwError (ValueError typeV)
+  return (Unit, (session record))
 
 -- EXCEPTION HANDLING
 -- T-RAISE
--- TYPE A? Int? String? Any? What is TYPE exactly? Like we previously defined Pid(S)|1 or something else
+checkComputation record (EAct (ERaise ty)) = do
+  return (ty, (session record))
 
 -- T-TRY
--- typeAction (try L catch M)
+checkComputation record (ETry action comp) = do
+  (ty1, session1) <- checkComputation record (EAct (action))
+  (ty2, session2) <- checkComputation record comp
+  -- if ty1 /= ty2 then throwError (TypeMismatch ty1 ty2)
+  -- else if session1 /= session2 then throwError (SessionMismatch session1 session2)
+  -- else return (ty1, session1)
+  return (ty1, session1)
 
 
 -- SESSION COMMUNICATION RULES
 -- T-CONN
 {- STEPS : connect label(value1) to value2 as role
-   1. Check if <role> !! label (type) exists in single-sessions
+   1. Check if <role> !! label (type) exists in session
    2. checkValue value1, should match types with type, V:A
    3. checkValue value2, should match Pid(followST), W:Pid(T)
    4. T = sessionType of role
    5. return 1 and corresponding updated sessionType
-  
-  s = Pinger ?? ping(unit) . Pinger ! pong(unit) . ##Ponger
-  s` = Pinger ! pong(unit) . ##Ponger
-  session
-  
-  action:session'
-
-  HOW TO MOVE ON TO THE NEXT SESSION AFTER THIS ACTION MANUALLY? BREAK AND FEED NEXT?
 -}
+
+
+-- checkAction :: SessionType -> Role -> Label -> Maybe Type
+-- checkAction (SAction []) role label = Nothing
+-- checkAction (SAction [x:xs]) role label = case x of
+--                                             (SConnect role' label' typeA) -> if role == role' && label == label'
+--                                                                            then typeA else checkAction xs role label
+-- checkAction _ role label = Nothing
+
+
+
+-- checkComputation record ((EConnect label valueV valueW role)) = do
+--   (action, session') <- extractAction (session record)
+--   typeV <- checkValue (typeEnv record) valueV
+--   typeW <- checkValue (typeEnv record) valueW
+--   sessionType' <- getSessionType (protocols record) role
+--   returnType <- checkAction (session record) role label
+
+--   case returnType of
+--     Just typeA -> if typeV /= typeA
+--                     then throwError(TypeMismatch typeV typeA)
+--                   else if typeW /= (EPid followST)
+--                     then throwError (ValueError valueW)
+--                   else if followST /= sessionType'
+--                     then throwError (SessionMismatch followST sessionType')  -- Change to more specific
+--                   else return (Unit, session')
+--     Nothing    -> throwError (BranchError role label)
 
 -- T-SEND
 {- STEPS : send label(value) to role
