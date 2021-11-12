@@ -72,7 +72,7 @@ data Type = EPid SessionType
   | TString
   | TInt
   | TBool
-  | Unit deriving (Eq,Show)
+  | Unit deriving (Show)
 -- Values
 data EValue = EVar String
   | EInt Int
@@ -592,7 +592,7 @@ main = do
 
 
 
-actor PongerActor follows (Pinger ?? ping(Unit) . Pinger ! pong(Unit) . ##Ponger) {
+actor PongerActor follows ((Pinger ?? ping(Unit) . ##Ponger) +  (Pinger ! pong(Unit) . end)) {
   accept from Pinger {
       ping(True) ->
           send pong(()) to Pinger;
