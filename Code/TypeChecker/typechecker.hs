@@ -29,7 +29,7 @@ data EValue = EVar String
   | EInt Int
   | EBool Bool
   | EUnit
-  deriving (Show)
+  deriving (Eq, Ord, Show)
 -- Actions
 data EAction = EReturn EValue
   | EContinue Label
@@ -77,17 +77,6 @@ data Protocol = Protocol Role SessionType deriving (Show)
 type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
 
-
--- instance Eq Type where
---   EPid s1 == EPid s2  = 
---   TString == TString  = True
---   TInt == TInt        = True
---   TBool == TBool      = True
---   Unit == Unit        = True
---   _ == _              = False
-
-
-
 {-
 
 Check Program :: Program → TC ()
@@ -106,12 +95,10 @@ compareTypes t1 t2 = if t1 <> t2 then throwError (IncompatibleTypes t1 t2) else 
 
 https://homepages.inf.ed.ac.uk/wadler/papers/marktoberdorf/baastad.pdf
 http://www.dcs.gla.ac.uk/~ornela/projects/Artem%20Usov.pdf
-https://hackage.haskell.org/package/mtl-2.2.2/docs/Control-Monad-Reader.html
 
 -}
 
-type TypeEnv = [(String, Type)]
--- type TypeEnv = [(EValue, Type)]
+type TypeEnv = [(EValue, Type)]
 type RecEnv = [(String, SessionType)]
 
 
@@ -126,8 +113,7 @@ data Record = Record { actorDefs :: [ActorDef]
 
 
 
-data Error = UnboundVariable String
--- data Error = UnboundVariable EValue
+data Error = UnboundVariable EValue
         | UnboundRecursionVariable String
         | RecursionVariableMismatch String Type Type
         | ActorNotDefined String
@@ -141,7 +127,7 @@ data Error = UnboundVariable String
         | RoleMismatch Role
 
 instance Show Error where
-  show (UnboundVariable var) = "Unbounded variable: " ++ (show var)
+  show (UnboundVariable val) = "Unbounded variable: " ++ (show val)
   show (UnboundRecursionVariable label) = "Unbounded recursion variable at" ++ (show label)
   show (ActorNotDefined actor) = "Actor " ++ show actor ++ "is not defined"
   show (ValueError value) = "Error at value: " ++ show value
@@ -166,29 +152,29 @@ checkValue :: TypeEnv -> EValue -> TypeCheck Type
 checkValue typeEnv EUnit = return(Unit)
 
 -- T-VAR
-checkValue typeEnv (EVar value) =
-  let returnType = Map.lookup value $ Map.fromList typeEnv in
-  case returnType of
-    Just t -> return t
-    Nothing -> throwError (UnboundVariable value)
-
-checkValue typeEnv (EInt int) =
-  let returnType = Map.lookup (show int) $ Map.fromList typeEnv in
-  case returnType of
-    Just t -> return t
-    Nothing -> throwError (UnboundVariable $ show int)
-
-checkValue typeEnv (EBool bool) =
-  let returnType = Map.lookup (show bool) $ Map.fromList typeEnv in
-  case returnType of
-    Just t -> return t
-    Nothing -> throwError (UnboundVariable $ show bool)
-
--- checkValue typeEnv value = do
+-- checkValue typeEnv (EVar value) =
 --   let returnType = Map.lookup value $ Map.fromList typeEnv in
---     case returnType of
---       Just t -> return t
---       Nothing -> throwError (UnboundVariable value)
+--   case returnType of
+--     Just t -> return t
+--     Nothing -> throwError (UnboundVariable value)
+
+-- checkValue typeEnv (EInt int) =
+--   let returnType = Map.lookup (show int) $ Map.fromList typeEnv in
+--   case returnType of
+--     Just t -> return t
+--     Nothing -> throwError (UnboundVariable $ show int)
+
+-- checkValue typeEnv (EBool bool) =
+--   let returnType = Map.lookup (show bool) $ Map.fromList typeEnv in
+--   case returnType of
+--     Just t -> return t
+--     Nothing -> throwError (UnboundVariable $ show bool)
+
+checkValue typeEnv value = do
+  let returnType = Map.lookup value $ Map.fromList typeEnv in
+    case returnType of
+      Just t -> return t
+      Nothing -> throwError (UnboundVariable value)
 
 
 
@@ -247,16 +233,16 @@ getWaitAction (SAction (x:xs)) role = do
 getWaitAction _ role = throwError (BranchRoleError role)
 
 
--- getAcceptAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
--- getAcceptAction (SAction []) role label = throwError (BranchError role label)
--- getAcceptAction (SAction (x:xs)) role label = do
---   case x of
---     ((SAccept role' label' typeA),session) ->
---       if role == role' && label == label'
---         then return (typeA,session)
---       else getAcceptAction (SAction xs) role label
---     _  -> getAcceptAction (SAction xs) role label
--- getAcceptAction _ role label = throwError (BranchError role label)
+getAcceptAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
+getAcceptAction (SAction []) role label = throwError (BranchError role label)
+getAcceptAction (SAction (x:xs)) role label = do
+  case x of
+    ((SAccept role' label' typeA),session) ->
+      if role == role' && label == label'
+        then return (typeA,session)
+      else getAcceptAction (SAction xs) role label
+    _  -> getAcceptAction (SAction xs) role label
+getAcceptAction _ role label = throwError (BranchError role label)
 
 
 
@@ -295,7 +281,7 @@ checkComputation :: Record -> Computation -> TypeCheck (Type, SessionType)
 -- T-LET
 checkComputation record (EAssign binder c1 c2) = do
   (ty, session') <- checkComputation record c1
-  (ty', session'') <- checkComputation (record { typeEnv=(binder,ty):(typeEnv record), session=session'}) c2
+  (ty', session'') <- checkComputation (record { typeEnv=((EVar binder),ty):(typeEnv record), session=session'}) c2
   return (ty', session'')
 
 -- T-REC
@@ -391,28 +377,13 @@ checkComputation record (EAct (EDisconnect role)) = do
       else throwError (RoleMismatch role)
     _ -> throwError (SessionConsumptionError (session record))
 
--- T-ACCEPT
-{- STEPS : accept from role (labeli(valuei) -> compi)
-   1. For all choices:
-   		(ty,ses) <- typeEnv + value:type checkComputation compi
-   2. All branches must have same return type and post-condition session
-   3. return (ty, ses)
--}
-
--- T-RECV
-{- STEPS : receive from role (labeli(valuei) -> compi)
-   1. For all choices:
-   		(ty,ses) <- typeEnv + value:type checkComputation compi
-   2. All branches must have same return type and post-condition session
-   3. return (ty, ses)
--}
 
 main = do
   let s = SAction [ (SConnect "role" "label" TString, SDisconnect "role")
                   , (SSend "role" "label" TString, SAction [(SWait "role", SEnd)])
                   , (SWait "role", SEnd)]
 
-  let r = Record { typeEnv = [("v", TString), ("w", TBool)]
+  let r = Record { typeEnv = [(EVar "v", TString), (EVar "w", TBool)]
                  , protocols = [Protocol "role" (STypeIdentifier "HELLO")]
                  , session = s }
   -- let result = checkComputation r (EAct (EConnect "label" (EVar "v") (EVar "w") "role"))
