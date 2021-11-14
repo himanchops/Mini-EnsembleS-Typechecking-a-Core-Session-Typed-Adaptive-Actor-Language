@@ -3,6 +3,9 @@ import Control.Monad
 import Control.Monad.Except
 import Data.Text (Text)
 import Data.Void
+import Data.List
+import Data.Maybe
+import Data.Either
 import qualified Data.Text as T
 import qualified Data.Map as Map
 
@@ -152,24 +155,6 @@ checkValue :: TypeEnv -> EValue -> TypeCheck Type
 checkValue typeEnv EUnit = return(Unit)
 
 -- T-VAR
--- checkValue typeEnv (EVar value) =
---   let returnType = Map.lookup value $ Map.fromList typeEnv in
---   case returnType of
---     Just t -> return t
---     Nothing -> throwError (UnboundVariable value)
-
--- checkValue typeEnv (EInt int) =
---   let returnType = Map.lookup (show int) $ Map.fromList typeEnv in
---   case returnType of
---     Just t -> return t
---     Nothing -> throwError (UnboundVariable $ show int)
-
--- checkValue typeEnv (EBool bool) =
---   let returnType = Map.lookup (show bool) $ Map.fromList typeEnv in
---   case returnType of
---     Just t -> return t
---     Nothing -> throwError (UnboundVariable $ show bool)
-
 checkValue typeEnv value = do
   let returnType = Map.lookup value $ Map.fromList typeEnv in
     case returnType of
@@ -181,7 +166,6 @@ checkValue typeEnv value = do
 
 
 -- HELPER FUNCTIONS
-
 
 returnSessionType :: [ActorDef] -> Actor -> TypeCheck SessionType
 returnSessionType [] actor = throwError (ActorNotDefined actor)
@@ -246,19 +230,25 @@ getAcceptAction _ role label = throwError (BranchError role label)
 
 
 
--- getAcceptBranches :: Record -> Role -> Choices -> TypeCheck([Type,SessionType])
--- getAcceptBranches record role choices = do
---   --choices = [(Label, EValue, Computation)]
---   results = 
---     map (\(label, value, computation) -> 
---       (value, getAcceptAction (session record) role label, computation)) choices
---   -- results = [(value, (type, session), computation)]
---   checkComputation record {typeEnv=(value:)}
+getAcceptBranches :: Record -> Role -> Choices -> [(Type, SessionType)]
+getAcceptBranches record role choices = do
+  actionsList <- map (\(label, value, computation) ->
+    (value, fromRight (TString, SEnd) (getAcceptAction (session record) role label), computation)) choices
+  results <- map (\(value, (tyI, sessionI), computation) ->
+    fromRight (TString, SEnd) (checkComputation record{typeEnv=(value,tyI):(typeEnv record), session=sessionI} computation)) [actionsList]
+  return results
 
 
-
-
-
+checkAllEqual :: [(Type, SessionType)] -> TypeCheck Bool
+checkAllEqual xs = do
+  let checkList = map (== head xs) (tail xs)
+  if and checkList == True
+    then return True
+  else do
+    let (ty, session)  = head xs
+    let (ty',session') = (tail xs) !! maybe 0 id (elemIndex False checkList)
+    if ty /= ty' then throwError (TypeMismatch ty ty')
+    else throwError (SessionMismatch session session')
 
 
 
@@ -286,7 +276,7 @@ checkComputation record (EAssign binder c1 c2) = do
 
 -- T-REC
 checkComputation record (ERecursion label comp) = do
-  (ty, session') <- checkComputation record {recEnv=((label,(session record)):(recEnv record))  } comp
+  (ty, session') <- checkComputation record {recEnv=((label,(session record)):(recEnv record))} comp
   return (ty, session')
 
 -- T-CONTINUE
@@ -360,8 +350,9 @@ checkComputation record (EAct (ESend label value role)) = do
 -- T-ACCEPT
 -- checkComputation record (EAct (EAccept role choices)) = do
 --   branches <- getAcceptBranches record role choices
-
-
+--   result <- checkAllEqual [branches]
+--   case result of
+--     True -> return ([branches] !! 0)
 
 
 -- T-WAIT
@@ -381,11 +372,14 @@ checkComputation record (EAct (EDisconnect role)) = do
 main = do
   let s = SAction [ (SConnect "role" "label" TString, SDisconnect "role")
                   , (SSend "role" "label" TString, SAction [(SWait "role", SEnd)])
-                  , (SWait "role", SEnd)]
+                  , (SWait "role", SEnd)
+                  , (SAccept "role" "label" TString, SEnd)]
 
-  let r = Record { typeEnv = [(EVar "v", TString), (EVar "w", TBool)]
+  let r = Record { typeEnv = [(EVar "v", TString), (EVar "w", EPid (STypeIdentifier "Session"))]
                  , protocols = [Protocol "role" (STypeIdentifier "HELLO")]
-                 , session = s }
+                 , session = s
+                 , followST = STypeIdentifier "Session" }
   -- let result = checkComputation r (EAct (EConnect "label" (EVar "v") (EVar "w") "role"))
-  let result = checkComputation r (EAct (EWait "role")) 
-  return result
+  let choices = [("label", (EVar "v"), (EAct (ESelf))), ("label", (EVar "v"), (EAct (EDiscover (STypeIdentifier "Hello"))))]
+  let x = getAcceptBranches r "role" choices
+  return x
