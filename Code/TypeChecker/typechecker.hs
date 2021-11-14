@@ -81,15 +81,6 @@ type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
 
 {-
-
-Check Program :: Program → TC ()
-Check Definition :: Definition → TC()
-Check Computation :: SessionType → TypeEnv → SessionType → Computation → TC(Type, SessionType)
-Check Value :: TypeEnv → Value → TC Type
--}
-
-
-{-
 compareTypes :: Type -> Type -> TC Type
 compareTypes Any t = return t
 compareTypes t Any = return t
@@ -145,28 +136,9 @@ instance Show Error where
 type TypeCheck = Either Error
 
 
-
-
-
-
--- VALUE TYPING
-checkValue :: TypeEnv -> EValue -> TypeCheck Type
--- T-UNIT
-checkValue typeEnv EUnit = return(Unit)
-
--- T-VAR
-checkValue typeEnv value = do
-  let returnType = Map.lookup value $ Map.fromList typeEnv in
-    case returnType of
-      Just t -> return t
-      Nothing -> throwError (UnboundVariable value)
-
-
-
-
-
 -- HELPER FUNCTIONS
 
+-- Returns SessionType of input Actor from list of ActorDefs
 returnSessionType :: [ActorDef] -> Actor -> TypeCheck SessionType
 returnSessionType [] actor = throwError (ActorNotDefined actor)
 returnSessionType ((EActorDef a s _):ax) actor =
@@ -174,6 +146,8 @@ returnSessionType ((EActorDef a s _):ax) actor =
     then return s
   else returnSessionType ax actor
 
+
+-- Returns SessionType of input Role from list of Protocols
 getSessionType :: [Protocol] -> Role -> TypeCheck SessionType
 getSessionType [] role = throwError (UndefinedProtocol role)
 getSessionType ((Protocol role' session'):xs) role = do
@@ -182,6 +156,7 @@ getSessionType ((Protocol role' session'):xs) role = do
   else getSessionType xs role
 
 
+-- Returns (Type, SessionType) of matching Role, Label in CONNECT SessionAction
 getConnectAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
 getConnectAction (SAction []) role label = throwError (BranchError role label)
 getConnectAction (SAction (x:xs)) role label = do
@@ -194,6 +169,7 @@ getConnectAction (SAction (x:xs)) role label = do
 getConnectAction _ role label = throwError (BranchError role label)
 
 
+-- Returns (Type, SessionType) of matching Role, Label in SEND SessionAction
 getSendAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
 getSendAction (SAction []) role label = throwError (BranchError role label)
 getSendAction (SAction (x:xs)) role label = do
@@ -206,6 +182,7 @@ getSendAction (SAction (x:xs)) role label = do
 getSendAction _ role label = throwError (BranchError role label)
 
 
+-- Returns (Type, SessionType) of matching Role, Label in WAIT SessionAction
 getWaitAction :: SessionType -> Role -> TypeCheck (Type, SessionType)
 getWaitAction (SAction []) role = throwError (BranchRoleError role)
 getWaitAction (SAction (x:xs)) role = do
@@ -217,6 +194,7 @@ getWaitAction (SAction (x:xs)) role = do
 getWaitAction _ role = throwError (BranchRoleError role)
 
 
+-- Returns (Type, SessionType) of matching Role, Label in ACCEPT SessionAction
 getAcceptAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
 getAcceptAction (SAction []) role label = throwError (BranchError role label)
 getAcceptAction (SAction (x:xs)) role label = do
@@ -230,7 +208,8 @@ getAcceptAction _ role label = throwError (BranchError role label)
 
 
 
-getAcceptBranches :: Record -> Role -> Choices -> [(Type, SessionType)]
+-- Returns list of (Type, SessionType) of all the branches/choices in ACCEPT SessionAction
+-- getAcceptBranches :: Record -> Role -> Choices -> [(Type, SessionType)]
 getAcceptBranches record role choices = do
   actionsList <- map (\(label, value, computation) ->
     (value, fromRight (TString, SEnd) (getAcceptAction (session record) role label), computation)) choices
@@ -239,11 +218,12 @@ getAcceptBranches record role choices = do
   return results
 
 
-checkAllEqual :: [(Type, SessionType)] -> TypeCheck Bool
+-- Checks if all the (Type, SessionType) are same and returns it
+checkAllEqual :: [(Type, SessionType)] -> TypeCheck (Type, SessionType)
 checkAllEqual xs = do
   let checkList = map (== head xs) (tail xs)
   if and checkList == True
-    then return True
+    then return $ head xs
   else do
     let (ty, session)  = head xs
     let (ty',session') = (tail xs) !! maybe 0 id (elemIndex False checkList)
@@ -265,7 +245,21 @@ checkBehaviour record (EComp comp) = do
 
 
 
+-- VALUE TYPING
+checkValue :: TypeEnv -> EValue -> TypeCheck Type
+-- T-UNIT
+checkValue typeEnv EUnit = return(Unit)
 
+-- T-VAR
+checkValue typeEnv value = do
+  let returnType = Map.lookup value $ Map.fromList typeEnv in
+    case returnType of
+      Just t -> return t
+      Nothing -> throwError (UnboundVariable value)
+
+
+
+-- T-BODY
 checkComputation :: Record -> Computation -> TypeCheck (Type, SessionType)
 -- FUNCTIONAL RULES
 -- T-LET
@@ -349,10 +343,11 @@ checkComputation record (EAct (ESend label value role)) = do
 
 -- T-ACCEPT
 -- checkComputation record (EAct (EAccept role choices)) = do
---   branches <- getAcceptBranches record role choices
---   result <- checkAllEqual [branches]
---   case result of
---     True -> return ([branches] !! 0)
+--   branches <- (getAcceptBranches record role choices)
+--   return $ checkAllEqual [branches]
+
+-- T-RECV
+
 
 
 -- T-WAIT
@@ -369,17 +364,51 @@ checkComputation record (EAct (EDisconnect role)) = do
     _ -> throwError (SessionConsumptionError (session record))
 
 
-main = do
-  let s = SAction [ (SConnect "role" "label" TString, SDisconnect "role")
-                  , (SSend "role" "label" TString, SAction [(SWait "role", SEnd)])
-                  , (SWait "role", SEnd)
-                  , (SAccept "role" "label" TString, SEnd)]
 
-  let r = Record { typeEnv = [(EVar "v", TString), (EVar "w", EPid (STypeIdentifier "Session"))]
-                 , protocols = [Protocol "role" (STypeIdentifier "HELLO")]
-                 , session = s
-                 , followST = STypeIdentifier "Session" }
-  -- let result = checkComputation r (EAct (EConnect "label" (EVar "v") (EVar "w") "role"))
-  let choices = [("label", (EVar "v"), (EAct (ESelf))), ("label", (EVar "v"), (EAct (EDiscover (STypeIdentifier "Hello"))))]
-  let x = getAcceptBranches r "role" choices
+-- T-SEQUENCE
+checkComputation record (ESequence comp1 comp2) = do
+  (ty, session)   <- checkComputation record comp1
+  (ty', session') <- checkComputation record{session=session} comp2
+  return (ty', session')
+
+
+
+-- T-DEF
+checkActorDef :: Record -> ActorDef -> TypeCheck ()
+checkActorDef record (EActorDef actor session computation) = do
+  (ty, session') <- checkComputation record{followST = session, session=session} computation
+  if session' == SEnd then return ()
+  else throwError (SessionConsumptionError session)
+
+
+
+-- T-PROGRAM
+checkProgram :: Program -> TypeCheck ()
+checkProgram (typeAliases, actorDefs, protocols, computation) = do
+  let record = Record { actorDefs=actorDefs
+                      , typeAliases=typeAliases
+                      , protocols=protocols
+                      , typeEnv=[], recEnv=[]}
+  mapM_ (checkActorDef record) actorDefs
+  return ()
+
+
+
+
+
+main = do
+  -- let s = SAction [ (SConnect "role" "label" TString, SDisconnect "role")
+  --                 , (SSend "role" "label" TString, SAction [(SWait "role", SEnd)])
+  --                 , (SWait "role", SEnd)
+  --                 , (SAccept "role" "label" TString, SEnd)]
+
+  -- let r = Record { typeEnv = [(EVar "v", TString), (EVar "w", EPid (STypeIdentifier "Session"))]
+  --                , protocols = [Protocol "role" (STypeIdentifier "HELLO")]
+  --                , session = s
+  --                , followST = STypeIdentifier "Session" }
+  -- -- let result = checkComputation r (EAct (EConnect "label" (EVar "v") (EVar "w") "role"))
+  -- let choices = [("label", (EVar "v"), (ESequence (EAct (ESelf)) (EAct (ESelf))) ), ("label", (EVar "v"), (EAct (EDiscover (STypeIdentifier "Hello"))))]
+  -- let x = getAcceptBranches r "role" choices
+  let r = Record {}
+  let x = checkActorDef r (EActorDef "actor" (STypeIdentifier "Session") ((EAct (ESelf))))
   return x
