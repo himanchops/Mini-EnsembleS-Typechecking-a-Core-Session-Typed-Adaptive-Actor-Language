@@ -117,6 +117,7 @@ data Error = UnboundVariable EValue
         | UndefinedProtocol Role
         | RoleMismatch Role
         | UndefinedAlias SessionType
+        | ExpectedPID Type
 
 instance Show Error where
   show (UnboundVariable val) = "Unbounded variable: " ++ (show val)
@@ -131,6 +132,8 @@ instance Show Error where
   show (UndefinedProtocol role) = "Role " ++ show role ++ "has no defined protocol"
   show (RoleMismatch role) = "Mismatched Role " ++ show role
   show (UndefinedAlias session) = "Session " ++ show session ++ " has no defined type alias"
+  show (ExpectedPID ty) = "Type error for type " ++ show ty ++ ". Expected PID"
+
 type TypeCheck = Either Error
 
 
@@ -171,7 +174,7 @@ getSessionTypeOfRole ((Protocol role' session'):xs) role = do
 
 
 
-
+-- Returns SessionType for input SessionAlias
 getAlias :: [TypeAlias] -> SessionType -> TypeCheck SessionType
 getAlias [] (STypeIdentifier session) = throwError (UndefinedAlias (STypeIdentifier session))
 getAlias ((SessionTypeAlias sessionName sessionType):xs) (STypeIdentifier session) = do
@@ -258,6 +261,8 @@ getAcceptBranches record role choices = do
     actionsList
   return results
 
+
+-- Returns list of (Type, SessionType) of all the branches/choices in RECEIVE SessionAction
 getReceiveBranches :: Record -> Role -> Choices -> TypeCheck [(Type, SessionType)]
 getReceiveBranches record role choices = do
   actionsList <- mapM (\(label, value, computation) ->
@@ -280,6 +285,12 @@ checkAllEqual xs = do
     let (ty',session') = (tail xs) !! maybe 0 id (elemIndex False checkList)
     if ty /= ty' then throwError (IncompatibleTypes ty ty')
     else throwError (SessionMismatch session session')
+
+
+
+unwrapPID :: Type -> TypeCheck SessionType
+unwrapPID (EPid session) = return session
+unwrapPID t = throwError (ExpectedPID t)
 
 
 
@@ -381,7 +392,10 @@ checkComputation record (EAct (EConnect label valueV valueW role)) = do
   sessionType' <- getSessionTypeOfRole (protocols record) role
 
   compareTypes typeV typeA
-  compareTypes typeW (EPid (followST record))
+  pidST <- unwrapPID typeW
+  compareSessions pidST sessionType'
+  -- compareTypes typeW (EPid (followST record))
+
   compareSessions (typeAliases record) (followST record) sessionType'
   return (Unit, session')
 
@@ -391,8 +405,8 @@ checkComputation record (EAct (ESend label value role)) = do
   (typeA, session') <- getSendAction (session record) role label
   typeV <- checkValue (typeEnv record) value
 
-  if typeV /= typeA then throwError(IncompatibleTypes typeV typeA)
-  else return (Unit, session')
+  compareTypes typeV typeA
+  return (Unit, session')
 
 
 -- T-ACCEPT
