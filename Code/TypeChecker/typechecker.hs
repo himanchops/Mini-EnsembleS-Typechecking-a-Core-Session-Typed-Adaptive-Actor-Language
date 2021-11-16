@@ -143,7 +143,7 @@ type TypeCheck = Either Error
 compareTypes :: Type -> Type -> TypeCheck Type
 compareTypes TAny t = return t
 compareTypes t TAny = return t
-compareTypes t1 t2 = if t1 /= t2 then throwError (IncompatibleTypes t1 t2) else return t1
+compareTypes t1 t2  = if t1 /= t2 then throwError (IncompatibleTypes t1 t2) else return t1
 
 
 compareSessions :: [TypeAlias] -> SessionType -> SessionType -> TypeCheck SessionType
@@ -254,7 +254,8 @@ getReceiveAction _ role label = throwError (BranchError role label)
 getAcceptBranches :: Record -> Role -> Choices -> TypeCheck [(Type, SessionType)]
 getAcceptBranches record role choices = do
   actionsList <- mapM (\(label, value, computation) ->
-    getAcceptAction (session record) role label >>= \act ->
+    getAlias (typeAliases record) (session record) >>= \session ->
+    getAcceptAction session role label >>= \act ->
     return (value, act, computation)) choices
   results <- mapM (\(value, (tyI, sessionI), computation) ->
     checkComputation record{typeEnv=(value,tyI):(typeEnv record), session=sessionI} computation)
@@ -266,7 +267,8 @@ getAcceptBranches record role choices = do
 getReceiveBranches :: Record -> Role -> Choices -> TypeCheck [(Type, SessionType)]
 getReceiveBranches record role choices = do
   actionsList <- mapM (\(label, value, computation) ->
-    getReceiveAction (session record) role label >>= \act ->
+    getAlias (typeAliases record) (session record) >>= \session ->
+    getReceiveAction session role label >>= \act ->
     return (value, act, computation)) choices
   results <- mapM (\(value, (tyI, sessionI), computation) ->
     checkComputation record{typeEnv=(value,tyI):(typeEnv record), session=sessionI} computation)
@@ -304,7 +306,6 @@ checkBehaviour record (EComp comp) = do
   if session' == SEnd
     then return ()
   else throwError (SessionConsumptionError (session record))
-
 
 
 
@@ -357,7 +358,8 @@ checkComputation record (EAct (ENew actor)) = do
   return (EPid session', (session record))
 
 -- T-SELF
-checkComputation record (EAct (ESelf)) = return (EPid (followST record), (session record))
+checkComputation record (EAct (ESelf)) = getAlias (typeAliases record) (followST record) >>= \f ->
+  return (EPid f, (session record))
 
 -- T-DISCOVER
 checkComputation record (EAct (EDiscover s)) = getAlias (typeAliases record) s >>= \s ->
@@ -392,10 +394,9 @@ checkComputation record (EAct (EConnect label valueV valueW role)) = do
   sessionType' <- getSessionTypeOfRole (protocols record) role
 
   compareTypes typeV typeA
-  pidST <- unwrapPID typeW
-  compareSessions pidST sessionType'
+  unwrapPID typeW >>= \pidST ->
+    compareSessions (typeAliases record) pidST sessionType'
   -- compareTypes typeW (EPid (followST record))
-
   compareSessions (typeAliases record) (followST record) sessionType'
   return (Unit, session')
 
@@ -481,10 +482,10 @@ main = do
                  , protocols = [Protocol "role" (STypeIdentifier "Session")]
                  , session = s
                  , followST = STypeIdentifier "Session"
-                 , typeAliases = [] }
-  let choices = [("label", (EVar "x"), (ESequence (EAct (ESelf)) (EAct (ESelf))) )
+                 , typeAliases = [(SessionTypeAlias (STypeIdentifier "Session") SEnd)] }
+  let choices = [("label", (EVar "x"), (EAct (ESelf)))
                 ,("label", (EVar "v"), (EAct (EDiscover (STypeIdentifier "Session"))))]
   -- let result = checkComputation r (EAct (EConnect "label" (EVar "v") (EVar "w") "role"))
-  let result = checkComputation r (EAct (EAccept "role" choices))
 
+  let result = checkComputation r (EAct (EAccept "role" choices))
   return result
