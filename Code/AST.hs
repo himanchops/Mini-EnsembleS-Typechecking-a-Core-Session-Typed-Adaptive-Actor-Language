@@ -17,7 +17,7 @@ data Type = EPid SessionType
   | Unit
 -- Values
 data EValue = EVar String
-  | EInt String
+  | EInt Int
   | EBool Bool
   | EUnit
 -- Actions

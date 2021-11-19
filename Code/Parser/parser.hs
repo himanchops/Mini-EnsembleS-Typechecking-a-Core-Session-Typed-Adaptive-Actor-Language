@@ -12,7 +12,7 @@ import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import qualified Data.Text as T
 import qualified Text.Megaparsec.Char.Lexer as L
-
+import qualified Data.Text.IO as TI
 
 
 type Parser = Parsec Void Text
@@ -51,6 +51,9 @@ parens = between (symbol "(") (symbol ")")
 braces :: Parser a -> Parser a
 braces = between (symbol "{") (symbol "}")
 
+quotes :: Parser a -> Parser a
+quotes = between (symbol "\"") (symbol "\"")
+
 pUpperCase :: Parser String
 pUpperCase = (lexeme . try) p
   where p = (:) <$> upperChar <*> many alphaNumChar
@@ -75,6 +78,7 @@ data Type = EPid SessionType
   | Unit deriving (Show)
 -- Values
 data EValue = EVar String
+  | EString String
   | EInt Int
   | EBool Bool
   | EUnit
@@ -128,8 +132,8 @@ type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
 
 
-pVValue :: Parser EValue
-pVValue = EVar <$> identifier
+pVVar :: Parser EValue
+pVVar = EVar <$> identifier
 
 
 pVUnit :: Parser EValue
@@ -138,6 +142,12 @@ pVUnit = do
   return EUnit
 
 convertInt int = let i = read int :: Int in i
+
+pVString :: Parser EValue
+pVString = do
+  str <- quotes identifier
+  return $ EString str
+
 
 pVInt :: Parser EValue
 pVInt = do
@@ -159,7 +169,8 @@ pValue = choice
   [ pVUnit
   , pVBoolTrue
   , pVBoolFalse
-  , pVValue
+  , pVVar
+  , pVString
   , pVInt
   ]
 
@@ -578,43 +589,5 @@ pProgram = do
 
 
 main = do
-  let test = [r|actor PingerActor follows (Ponger !! ping(Bool) . Ponger ? pong(Int) . #Ponger . rec browse . Pinger !! pong(Unit) . browse) {
-  let pid <= discover Ponger in
-  connect ping(()) to pid as Ponger;
-  receive from Ponger {
-      pong(False) -> wait Ponger
-      ping(x) -> raise[Unit]
-  };
-  browse ::
-  raise[Int]; self;
-  continue browse
-}
-
-
-
-actor PongerActor follows ((Pinger ?? ping(Unit) . ##Ponger) +  (Pinger ! pong(Unit) . end)) {
-  accept from Pinger {
-      ping(True) ->
-          send pong(()) to Pinger;
-          disconnect from Pinger
-      pong(heyy) ->
-        raise[Pid(Session)]
-  }
-}
-
-actor PongerActor follows (Ponger) {
-  accept from Pinger {
-      ping(()) ->
-          send pong(()) to Pinger;
-          disconnect from Pinger
-      pong(1234) ->
-        raise[String]
-  }
-}
-
-boot {
-  raise[Bool]
-}
-
-|]
-  parseTest pProgram test
+  input <- TI.readFile "store_input"
+  parseTest pProgram input

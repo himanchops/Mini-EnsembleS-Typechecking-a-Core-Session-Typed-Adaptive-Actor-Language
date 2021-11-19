@@ -1,0 +1,60 @@
+type RootSession = Client ?? RootRequest(String) . (Client ! TLDResponse(String) . ##Client) +
+                                                   (Client ! InvalidTLD(String) . ##Client)
+type ZoneSession = Client ?? ResolutionRequest(String) . (Client ! PartialResolution(String) . ##Client) + 
+                                                         (Client ! InvalidDomain(String) . ##Client) +
+                                                         (Client ! ResolutionComplete(String) . ##Client)
+type ClientSession = Root !! RootRequest(String) . (Root ? InvalidTLD(String) . #Root . end) +
+                        (Root ? TLDResponse(String) . #Root . rec lookup . ZS !! ResolutionRequest(String)
+                        . (ZS ?? PartialResolution(String) . #ZS . lookup) +
+                          (ZS ?? InvalidDomain(String) . #ZS . end) +
+                          (ZS ?? ResolutionComplete(String) . #ZS . end))
+actor Client follows (ClientSession) {
+  let RootServer <= discover RootSession in
+  connect RootRequest("DomainName") to RootServer as Root;
+  receive from Root {
+    TLDResponse("ZoneServerAddress") ->
+      wait Root;
+      lookup ::
+        connect ResolutionRequest(DomainName) to ZoneServer as ZS;
+        receive from ZS {
+          PartialResolution(ZoneServerAddress) ->
+            wait ZS;
+            continue lookup
+          InvalidDomain(String) ->
+            wait ZoneServer
+          ResolutionComplete(IPAddress) ->
+            wait ZoneServer
+        }
+    InvalidTLD("String") ->
+      wait Root
+  }
+}
+actor RootServer follows (RootSession) {
+  accept from Client {
+    RootRequest("DomainName") ->
+      send TLDResponse("ZoneServerAddress") to Client;
+      disconnect from Client
+    RootRequest("something_else") ->
+      send InvalidTLD("String") to Client;
+      disconnect from Client
+  }
+}
+actor ZoneServer follows (ZoneSession) {
+  accept from Client {
+    ResolutionRequest("DomainName") ->
+      send PartialResolution("ZoneServerAddress") to Client;
+      disconnect from Client
+    ResolutionRequest(DomainName) ->
+      send InvalidDomain(String) to Client;
+      disconnect from Client
+    ResolutionRequest(DomainName) ->
+      send ResolutionComplete(IPAddress) to Client;
+      disconnect from Client
+  }
+}
+Root : RootSession
+ZS : ZoneSession
+Client : ClientSession
+boot {
+ new Client
+}

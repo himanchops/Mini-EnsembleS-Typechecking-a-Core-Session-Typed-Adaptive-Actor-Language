@@ -29,6 +29,7 @@ data Type = EPid SessionType
   deriving (Eq, Show)
 -- Values
 data EValue = EVar String
+  | EString String
   | EInt Int
   | EBool Bool
   | EUnit
@@ -82,18 +83,28 @@ type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
 
 {-
-
-
 https://homepages.inf.ed.ac.uk/wadler/papers/marktoberdorf/baastad.pdf
 http://www.dcs.gla.ac.uk/~ornela/projects/Artem%20Usov.pdf
 
+IDENTIFYING UNFOLDED RECURSION
+(SRecursion x s) =  s(SRecursion x s)
+rec X . role ! Pinger . X
+role ! Pinger . rec X . role ! Pinger . X
+
+r X.S
+S r X.S.X
+
+              S         r X.S      X
+subst        ST        -> St  -> RecVar -> ST
+subst (SRecursionVar x)    s       y = 
+  if x == y then s else (RecVar X)
 -}
 
-type TypeEnv = [(EValue, Type)]
+type TypeEnv = [(String, Type)]
 type RecEnv = [(String, SessionType)]
 
 
-data Record = Record { actorDefs :: [ActorDef]
+data State = State { actorDefs :: [ActorDef]
   , protocols :: [Protocol]
   , typeAliases :: [TypeAlias]
   , followST :: SessionType
@@ -104,7 +115,7 @@ data Record = Record { actorDefs :: [ActorDef]
 
 
 
-data Error = UnboundVariable EValue
+data Error = UnboundVariable String
         | UnboundRecursionVariable String
         | RecursionVariableMismatch String Type Type
         | ActorNotDefined String
@@ -129,7 +140,7 @@ instance Show Error where
   show (BranchError role label) = "SessionAction: " ++ show role ++ " " ++ show label ++ " does not exists"
   show (BranchRoleError role) = "Role " ++ show role ++ " not found"
   show (SessionConsumptionError session) = "Incomplete consumption of session: " ++ show session
-  show (UndefinedProtocol role) = "Role " ++ show role ++ "has no defined protocol"
+  show (UndefinedProtocol role) = "Role " ++ show role ++ " has no defined protocol"
   show (RoleMismatch role) = "Mismatched Role " ++ show role
   show (UndefinedAlias session) = "Session " ++ show session ++ " has no defined type alias"
   show (ExpectedPID ty) = "Type error for type " ++ show ty ++ ". Expected PID"
@@ -139,13 +150,19 @@ type TypeCheck = Either Error
 
 -- HELPER FUNCTIONS
 
--- Compare two Types and returns 
-compareTypes :: Type -> Type -> TypeCheck Type
-compareTypes TAny t = return t
-compareTypes t TAny = return t
-compareTypes t1 t2  = if t1 /= t2 then throwError (IncompatibleTypes t1 t2) else return t1
 
 
+
+-- Compare two Types and returns Type if equal
+compareTypes :: [TypeAlias] -> Type -> Type -> TypeCheck Type
+compareTypes tA TAny t              = return t
+compareTypes tA t TAny              = return t
+compareTypes tA (EPid s1) (EPid s2) = compareSessions tA s1 s2 >>= \s -> return $ EPid s
+compareTypes tA t1 t2               = if t1 /= t2 then throwError (IncompatibleTypes t1 t2)
+                                      else return t1
+
+
+-- Compares two SessionTypes and returns SessionType if equal
 compareSessions :: [TypeAlias] -> SessionType -> SessionType -> TypeCheck SessionType
 compareSessions tA SAny s = return s
 compareSessions tA s SAny = return s
@@ -251,27 +268,33 @@ getReceiveAction _ role label = throwError (BranchError role label)
 
 
 -- Returns list of (Type, SessionType) of all the branches/choices in ACCEPT SessionAction
-getAcceptBranches :: Record -> Role -> Choices -> TypeCheck [(Type, SessionType)]
-getAcceptBranches record role choices = do
+getAcceptBranches :: State -> Role -> Choices -> TypeCheck [(Type, SessionType)]
+getAcceptBranches state role choices = do
   actionsList <- mapM (\(label, value, computation) ->
-    getAlias (typeAliases record) (session record) >>= \session ->
+    getAlias (typeAliases state) (session state) >>= \session ->
     getAcceptAction session role label >>= \act ->
     return (value, act, computation)) choices
   results <- mapM (\(value, (tyI, sessionI), computation) ->
-    checkComputation record{typeEnv=(value,tyI):(typeEnv record), session=sessionI} computation)
+    case value of
+      (EVar v) -> checkComputation state{typeEnv=(v,tyI):(typeEnv state), session=sessionI} computation
+      _        -> checkComputation state{typeEnv=(typeEnv state), session=sessionI} computation
+    )
     actionsList
   return results
 
 
 -- Returns list of (Type, SessionType) of all the branches/choices in RECEIVE SessionAction
-getReceiveBranches :: Record -> Role -> Choices -> TypeCheck [(Type, SessionType)]
-getReceiveBranches record role choices = do
+getReceiveBranches :: State -> Role -> Choices -> TypeCheck [(Type, SessionType)]
+getReceiveBranches state role choices = do
   actionsList <- mapM (\(label, value, computation) ->
-    getAlias (typeAliases record) (session record) >>= \session ->
+    getAlias (typeAliases state) (session state) >>= \session ->
     getReceiveAction session role label >>= \act ->
     return (value, act, computation)) choices
   results <- mapM (\(value, (tyI, sessionI), computation) ->
-    checkComputation record{typeEnv=(value,tyI):(typeEnv record), session=sessionI} computation)
+    case value of
+      (EVar v) -> checkComputation state{typeEnv=(v,tyI):(typeEnv state), session=sessionI} computation
+      _        -> checkComputation state{typeEnv=(typeEnv state), session=sessionI} computation
+      )
     actionsList
   return results
 
@@ -296,196 +319,199 @@ unwrapPID t = throwError (ExpectedPID t)
 
 
 
-checkBehaviour :: Record -> Behaviour -> TypeCheck ()
+checkBehaviour :: State -> Behaviour -> TypeCheck ()
 -- T-STOP
-checkBehaviour record (EStop) = return ()
+checkBehaviour state (EStop) = return ()
 
 
-checkBehaviour record (EComp comp) = do
-  (ty, session') <- checkComputation record comp
+checkBehaviour state (EComp comp) = do
+  (ty, session') <- checkComputation state comp
   if session' == SEnd
     then return ()
-  else throwError (SessionConsumptionError (session record))
+  else throwError (SessionConsumptionError (session state))
 
 
 
 -- VALUE TYPING
 checkValue :: TypeEnv -> EValue -> TypeCheck Type
 -- T-UNIT
-checkValue typeEnv EUnit = return(Unit)
+checkValue typeEnv EUnit       = return Unit
+-- T-STRING
+checkValue typeEnv (EString _) = return TString
+-- T-BOOL
+checkValue typeEnv (EBool _)   = return TBool
+-- T-INT
+checkValue typeEnv (EInt _)    = return TInt
 
 -- T-VAR
-checkValue typeEnv value = do
-  let returnType = Map.lookup value $ Map.fromList typeEnv in
+checkValue typeEnv (EVar string) = do
+  let returnType = Map.lookup string $ Map.fromList typeEnv in
     case returnType of
       Just t -> return t
-      Nothing -> throwError (UnboundVariable value)
+      Nothing -> throwError (UnboundVariable string)
 
 
 
 -- T-BODY
-checkComputation :: Record -> Computation -> TypeCheck (Type, SessionType)
+checkComputation :: State -> Computation -> TypeCheck (Type, SessionType)
 -- FUNCTIONAL RULES
 -- T-LET
-checkComputation record (EAssign binder c1 c2) = do
-  (ty, session') <- checkComputation record c1
-  (ty', session'') <- checkComputation record {typeEnv=((EVar binder),ty):(typeEnv record), session=session'} c2
+checkComputation state (EAssign binder c1 c2) = do
+  (ty, session') <- checkComputation state c1
+  (ty', session'') <- checkComputation state {typeEnv=(binder,ty):(typeEnv state), session=session'} c2
   return (ty', session'')
 
 -- T-REC
-checkComputation record (ERecursion label comp) = do
-  (ty, session') <- checkComputation record {recEnv=((label,(session record)):(recEnv record))} comp
+checkComputation state (ERecursion label comp) = do
+  (ty, session') <- checkComputation state {recEnv=((label,(session state)):(recEnv state))} comp
   return (ty, session')
 
 -- T-CONTINUE
-checkComputation record (EAct (EContinue label)) = do
-  let returnType = Map.lookup label $ Map.fromList (recEnv record)
+checkComputation state (EAct (EContinue label)) = do
+  let returnType = Map.lookup label $ Map.fromList (recEnv state)
   case returnType of
     Just t -> return (TAny, SAny)
     Nothing -> throwError (UnboundRecursionVariable label)
 
 -- T-RETURN
-checkComputation record (EAct (EReturn value)) = do
-  typeV <- checkValue (typeEnv record) value
-  return (typeV, (session record))
+checkComputation state (EAct (EReturn value)) = do
+  typeV <- checkValue (typeEnv state) value
+  return (typeV, (session state))
 
 
 
 -- ACTOR / ADAPTATION RULES
 -- T-NEW
-checkComputation record (EAct (ENew actor)) = do
-  session' <- getSessionTypeOfActor (actorDefs record) actor
-  return (EPid session', (session record))
+checkComputation state (EAct (ENew actor)) = do
+  session' <- getSessionTypeOfActor (actorDefs state) actor
+  session' <- getAlias (typeAliases state) session'
+  return (EPid session', (session state))
 
 -- T-SELF
-checkComputation record (EAct (ESelf)) = getAlias (typeAliases record) (followST record) >>= \f ->
-  return (EPid f, (session record))
+checkComputation state (EAct (ESelf)) = getAlias (typeAliases state) (followST state) >>= \f ->
+  return (EPid f, (session state))
 
 -- T-DISCOVER
-checkComputation record (EAct (EDiscover s)) = getAlias (typeAliases record) s >>= \s ->
-  return (EPid s, (session record))
+checkComputation state (EAct (EDiscover s)) = getAlias (typeAliases state) s >>= \s ->
+  return (EPid s, (session state))
 
 -- T-REPLACE
-checkComputation record (EAct (EReplace value behaviour)) = do
-  typeV <- checkValue (typeEnv record) value
+checkComputation state (EAct (EReplace value behaviour)) = do
+  typeV <- checkValue (typeEnv state) value
   case typeV of
-    (EPid sessionU) -> checkBehaviour (record {followST = sessionU}) behaviour
+    (EPid sessionU) -> checkBehaviour (state {followST = sessionU}) behaviour
     _               -> throwError (ValueError typeV)
-  return (Unit, (session record))
+  return (Unit, (session state))
 
 -- EXCEPTION HANDLING
 -- T-RAISE
-checkComputation record (EAct (ERaise ty)) = return (ty, SAny)
+checkComputation state (EAct (ERaise ty)) = return (ty, SAny)
 
 -- T-TRY
-checkComputation record (ETry action comp) = do
-  (ty1, session1) <- checkComputation record (EAct (action))
-  (ty2, session2) <- checkComputation record comp
-  ty <- compareTypes ty1 ty2
-  session <- compareSessions (typeAliases record) session1 session2
+checkComputation state (ETry action comp) = do
+  (ty1, session1) <- checkComputation state (EAct (action))
+  (ty2, session2) <- checkComputation state comp
+  ty <- compareTypes (typeAliases state) ty1 ty2
+  session <- compareSessions (typeAliases state) session1 session2
   return (ty,session)
 
 -- SESSION COMMUNICATION RULES
 -- T-CONN
-checkComputation record (EAct (EConnect label valueV valueW role)) = do
-  (typeA, session') <- getConnectAction (session record) role label
-  typeV <- checkValue (typeEnv record) valueV
-  typeW <- checkValue (typeEnv record) valueW
-  sessionType' <- getSessionTypeOfRole (protocols record) role
+checkComputation state (EAct (EConnect label valueV valueW role)) = do
+  (typeA, session') <- getConnectAction (session state) role label
+  typeV <- checkValue (typeEnv state) valueV
+  typeW <- checkValue (typeEnv state) valueW
+  sessionType' <- getSessionTypeOfRole (protocols state) role
 
-  compareTypes typeV typeA
-  unwrapPID typeW >>= \pidST ->
-    compareSessions (typeAliases record) pidST sessionType'
-  -- compareTypes typeW (EPid (followST record))
-  compareSessions (typeAliases record) (followST record) sessionType'
+  compareTypes (typeAliases state) typeV typeA
+  compareTypes (typeAliases state) typeW (EPid (sessionType'))
   return (Unit, session')
 
 
 -- T-SEND
-checkComputation record (EAct (ESend label value role)) = do
-  (typeA, session') <- getSendAction (session record) role label
-  typeV <- checkValue (typeEnv record) value
+checkComputation state (EAct (ESend label value role)) = do
+  (typeA, session') <- getSendAction (session state) role label
+  typeV <- checkValue (typeEnv state) value
 
-  compareTypes typeV typeA
+  compareTypes (typeAliases state) typeV typeA
   return (Unit, session')
 
 
 -- T-ACCEPT
-checkComputation record (EAct (EAccept role choices)) = do
-  branches <- getAcceptBranches record role choices
+checkComputation state (EAct (EAccept role choices)) = do
+  branches <- getAcceptBranches state role choices
   (ty, session) <- checkAllEqual branches
   return (ty, session)
 
 -- T-RECV
-checkComputation record (EAct (EReceive role choices)) = do
-  branches <- getReceiveBranches record role choices
+checkComputation state (EAct (EReceive role choices)) = do
+  branches <- getReceiveBranches state role choices
   (ty, session) <- checkAllEqual branches
   return (ty, session)
 
 
 -- T-WAIT
-checkComputation record (EAct (EWait role)) = do
-  (ty, session) <- getWaitAction (session record) role
+checkComputation state (EAct (EWait role)) = do
+  (ty, session) <- getWaitAction (session state) role
   return (ty, session)
 
 -- T-DISCONN
-checkComputation record (EAct (EDisconnect role)) = do
-  case (session record) of
+checkComputation state (EAct (EDisconnect role)) = do
+  case (session state) of
     (SDisconnect role') ->
       if role == role' then return (Unit, SEnd)
       else throwError (RoleMismatch role)
-    _ -> throwError (SessionConsumptionError (session record))
+    _ -> throwError (SessionConsumptionError (session state))
 
 
 -- T-SEQUENCE
-checkComputation record (ESequence comp1 comp2) = do
-  (ty, session)   <- checkComputation record comp1
-  (ty', session') <- checkComputation record{session=session} comp2
+checkComputation state (ESequence comp1 comp2) = do
+  (ty, session)   <- checkComputation state comp1
+  -- compareTypes (typeAliases state) ty Unit
+  (ty', session') <- checkComputation state{session=session} comp2
   return (ty', session')
 
 
 
 -- T-DEF
-checkActorDef :: Record -> ActorDef -> TypeCheck ()
-checkActorDef record (EActorDef actor session computation) = do
-  (ty, session') <- getAlias (typeAliases record) session >>= \s -> 
-    checkComputation record{followST=s, session=s} computation
-  if session' == SEnd then return ()
+checkActorDef :: State -> ActorDef -> TypeCheck ()
+checkActorDef state (EActorDef actor session computation) = do
+  session'<- getAlias (typeAliases state) session
+  (ty, session'') <- checkComputation state{followST=session', session=session'} computation
+  if session'' == SEnd then return ()
   else throwError (SessionConsumptionError session)
 
 
 -- T-PROGRAM
 checkProgram :: Program -> TypeCheck ()
 checkProgram (typeAliases, actorDefs, protocols, computation) = do
-  let record = Record { actorDefs=actorDefs
+  let state = State { actorDefs=actorDefs
                       , typeAliases=typeAliases
                       , protocols=protocols
                       , typeEnv=[], recEnv=[]}
-  mapM_ (checkActorDef record) actorDefs
+  mapM_ (checkActorDef state) actorDefs
+  checkComputation state{followST=SEnd, session=SEnd} computation
   return ()
 
 
 
 
 
+-- f (x,_,_,_) = x
+-- s (_,x,_,_) = x
+-- t (_,_,x,_) = x
 
-
-
-
-main = do
-  let s = SAction [ (SConnect "role" "label" TString, SDisconnect "role")
-                  , (SSend "role" "label" TString, SAction [(SWait "role", SEnd)])
-                  , (SWait "role", SEnd)
-                  , (SAccept "role" "label" TString, SEnd)]
-
-  let r = Record { typeEnv = [(EVar "v", TString), (EVar "w", EPid (STypeIdentifier "Session"))]
-                 , protocols = [Protocol "role" (STypeIdentifier "Session")]
-                 , session = s
-                 , followST = STypeIdentifier "Session"
-                 , typeAliases = [(SessionTypeAlias (STypeIdentifier "Session") SEnd)] }
-  let choices = [("label", (EVar "x"), (EAct (ESelf)))
-                ,("label", (EVar "v"), (EAct (EDiscover (STypeIdentifier "Session"))))]
-  -- let result = checkComputation r (EAct (EConnect "label" (EVar "v") (EVar "w") "role"))
-
-  let result = checkComputation r (EAct (EAccept "role" choices))
-  return result
+-- m = do
+--   let p = ([SessionTypeAlias (STypeIdentifier "Customer") (SAction [(SConnect "Store" "login" TString,SRecursion "browse" (SAction [(SSend "Store" "item" TString,SAction [(SReceive "Store" "price" TInt,SRecursionVar "browse")])]))])
+--            ,SessionTypeAlias (STypeIdentifier "Store") (SAction [(SAccept "Customer" "login" TString,SRecursion "browse" (SAction [(SReceive "Customer" "item" TString,SAction [(SSend "Customer" "price" TInt,SRecursionVar "browse")]),(SReceive "Customer" "address" TString,SAction [(SConnect "Courier" "deliver" TString,SAction [(SReceive "Courier" "ref" TInt,SAction [(SWait "Courier",SAction [(SSend "Customer" "ref" TInt,SDisconnect "Customer")])])])]),(SReceive "Customer" "quit" Unit,SDisconnect "Customer")]))])
+--            ,SessionTypeAlias (STypeIdentifier "Courier") (SAction [(SAccept "Store" "deliver" TString,SAction [(SSend "Store" "ref" TInt,SDisconnect "Store")])])]
+--           ,[EActorDef "CustomerActor" (STypeIdentifier "Customer") (EAssign "pid" (EAct (EDiscover (STypeIdentifier "Store"))) (ESequence (EAct (EConnect "login" (EString "credentials") (EVar "pid") "Store")) (ERecursion "browse" (ESequence (EAct (ESend "item" (EString "name") "Store")) (EAct (EReceive "Store" [("price",EInt 100,EAct (EContinue "browse"))])))))),EActorDef "StoreActor" (STypeIdentifier "Store") (EAct (EAccept "Customer" [("login",EString "credentials",ERecursion "browse" (EAct (EReceive "Customer" [("item",EString "name",ESequence (EAct (ESend "price" (EInt 20) "Customer")) (EAct (EContinue "browse"))),("address",EString "addr",EAssign "pid" (EAct (EDiscover (STypeIdentifier "Courier"))) (ESequence (EAct (EConnect "deliver" (EString "addr") (EVar "pid") "Courier")) (EAct (EReceive "Courier" [("ref",EInt 100,ESequence (EAct (EWait "Courier")) (ESequence (EAct (ESend "ref" (EInt 100) "Customer")) (EAct (EDisconnect "Customer"))))])))),("quit",EUnit,EAct (EDisconnect "Customer"))])))])),EActorDef "CourierActor" (STypeIdentifier "Courier") (EAct (EAccept "Store" [("deliver",EString "addr",ESequence (EAct (ESend "ref" (EInt 100) "Store")) (EAct (EDisconnect "Store")))]))],[Protocol "Store" (STypeIdentifier "Store"),Protocol "Customer" (STypeIdentifier "Customer"),Protocol "Courier" (STypeIdentifier "Courier")],EAct (ENew "Customer"))
+--   let st = State {actorDefs = (s p)
+--                 ,typeAliases = (f p)
+--                 ,protocols = (t p)
+--                 , typeEnv = []
+--                 , recEnv = []
+--                 , followST = (SAction [(SConnect "Store" "login" TString,SRecursion "browse" (SAction [(SSend "Store" "item" TString,SAction [(SReceive "Store" "price" TInt,SRecursionVar "browse")])]))])
+--                 , session =   (SRecursion "browse" (SAction [(SSend "Store" "item" TString,SAction [(SReceive "Store" "price" TInt,SRecursionVar "browse")])]))])
+--                 }
+--   checkComputation st 
