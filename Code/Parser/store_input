@@ -13,7 +13,7 @@ actor CustomerActor1 follows (Customer) {
     let pid <= discover Store in
     connect login("credentials") to pid as Store;
     browse ::
-      send item("name") to Store;
+      send item("item") to Store;
       receive price(100) from Store;
       continue browse
 }
@@ -36,8 +36,6 @@ actor CustomerActor3 follows (Customer) {
       send quit(()) to Store;
       wait Store
 }
-
-
 
 actor StoreActor follows (Store) {
 	accept login("credentials") from Customer;
@@ -69,5 +67,5 @@ Customer : Customer
 Courier : Courier
 
 boot{
-    new Customer
+    new Customer1
 }
