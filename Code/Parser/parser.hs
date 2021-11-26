@@ -83,11 +83,12 @@ data EValue = EVar String
   | EInt Int
   | EBool Bool
   | EUnit
+  | ECompare EValue EValue
   deriving (Show)
 -- Actions
 data EAction = EReturn EValue
   | EContinue Label
-  | ERaise Type
+  | ERaise
   | ENew Actor
   | ESelf
   | EReplace EValue Behaviour
@@ -98,6 +99,7 @@ data EAction = EReturn EValue
   | EReceive Role Choices
   | EWait Role
   | EDisconnect Role
+  | ECondition EValue Computation Computation
   deriving (Show)
 -- Computations
 data Computation = EAssign Binder Computation Computation
@@ -144,11 +146,10 @@ pVUnit = do
 
 convertInt int = let i = read int :: Int in i
 
--- Accepting space separate values
 pVString :: Parser EValue
 pVString = do
-  str <- quotes identifier
-  return $ EString str
+  str <- quotes $ many identifier
+  return $ EString $ unwords str
 
 
 pVInt :: Parser EValue
@@ -165,6 +166,14 @@ pVBoolFalse :: Parser EValue
 pVBoolFalse = do
   string' "false" *> notFollowedBy alphaNumChar *> sc
   return $ EBool False
+
+pCompare :: Parser EValue
+pCompare = try $ do
+  val1 <- pValue
+  symbol "=="
+  val2 <- pValue
+  return $ ECompare val1 val2
+
 
 pValue :: Parser EValue
 pValue = choice
@@ -231,8 +240,7 @@ pContinue = try $ do
 pRaise :: Parser EAction
 pRaise = try $ do
   reserved "raise"
-  returnType <- between (symbol "[") (symbol "]") pType
-  return $ ERaise returnType
+  return ERaise 
 
 pNew :: Parser EAction
 pNew = try $ do
@@ -343,6 +351,20 @@ pDisconnect = try $ do
   role <- identifier
   return $ EDisconnect role
 
+
+
+pCondition :: Parser EAction
+pCondition = do
+  reserved "if"
+  val <- parens pCompare
+  comp1 <- braces pComputation
+  reserved "else"
+  comp2 <- braces pComputation
+  return $ ECondition val comp1 comp2
+
+
+
+
 pAction :: Parser EAction
 pAction = choice
   [ pReturn
@@ -357,7 +379,9 @@ pAction = choice
   , pSend
   , pReceive
   , pWait
-  , pDisconnect ]
+  , pDisconnect
+  , pCondition
+  ]
 
 
 

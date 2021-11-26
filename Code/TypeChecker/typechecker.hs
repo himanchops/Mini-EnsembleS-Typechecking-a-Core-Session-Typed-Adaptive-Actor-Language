@@ -33,11 +33,12 @@ data EValue = EVar String
   | EInt Int
   | EBool Bool
   | EUnit
+  | ECompare EValue EValue
   deriving (Eq, Ord, Show)
 -- Actions
 data EAction = EReturn EValue
   | EContinue Label
-  | ERaise Type
+  | ERaise
   | ENew Actor
   | ESelf
   | EReplace EValue Behaviour
@@ -48,6 +49,7 @@ data EAction = EReturn EValue
   | EReceive Role Choices
   | EWait Role
   | EDisconnect Role
+  | ECondition EValue Computation Computation
   deriving (Show)
 -- Computations
 data Computation = EAssign Binder Computation Computation
@@ -141,8 +143,6 @@ type TypeCheck = Either Error
 {-
 
 Equi-recursive multiple comparisons
-Raise [TYPE] / Raise Any
-
 Receive label (value), what value?
 Assigment of value in code not possible yet. Add var?
 
@@ -346,22 +346,29 @@ checkBehaviour state (EComp comp) = do
 
 
 -- VALUE TYPING
-checkValue :: TypeEnv -> EValue -> TypeCheck Type
+checkValue :: State -> EValue -> TypeCheck Type
 -- T-UNIT
-checkValue typeEnv EUnit       = return Unit
+checkValue _ EUnit       = return Unit
 -- T-STRING
-checkValue typeEnv (EString _) = return TString
+checkValue _ (EString _) = return TString
 -- T-BOOL
-checkValue typeEnv (EBool _)   = return TBool
+checkValue _ (EBool _)   = return TBool
 -- T-INT
-checkValue typeEnv (EInt _)    = return TInt
+checkValue _ (EInt _)    = return TInt
 
 -- T-VAR
-checkValue typeEnv (EVar string) = do
-  let returnType = Map.lookup string $ Map.fromList typeEnv in
+checkValue state (EVar string) = do
+  let returnType = Map.lookup string $ Map.fromList (typeEnv state) in
     case returnType of
       Just t -> return t
       Nothing -> throwError (UnboundVariable string)
+
+-- T-COMPARE
+checkValue state (ECompare val1 val2) = do
+  ty1 <- checkValue state val1
+  ty2 <- checkValue state val2
+  ty <- compareTypes (typeAliases state) ty1 ty2
+  return TBool
 
 
 
@@ -389,8 +396,19 @@ checkComputation state (EAct (EContinue label)) = do
 
 -- T-RETURN
 checkComputation state (EAct (EReturn value)) = do
-  typeV <- checkValue (typeEnv state) value
+  typeV <- checkValue state value
   return (typeV, (session state))
+
+
+-- T-CONDITION
+checkComputation state (EAct (ECondition val comp1 comp2)) = do
+  ty <- checkValue state val
+  compareTypes (typeAliases state) ty TBool
+  (ty1, ses1) <- checkComputation state comp1
+  (ty2, ses2) <- checkComputation state comp2
+  ty' <- compareTypes (typeAliases state) ty1 ty2
+  ses' <- compareSessions (typeAliases state) ses1 ses2
+  return (ty', ses')
 
 
 
@@ -411,7 +429,7 @@ checkComputation state (EAct (EDiscover s)) = getAlias (typeAliases state) s >>=
 
 -- T-REPLACE
 checkComputation state (EAct (EReplace value behaviour)) = do
-  typeV <- checkValue (typeEnv state) value
+  typeV <- checkValue state value
   case typeV of
     (EPid sessionU) -> checkBehaviour (state {followST = sessionU}) behaviour
     _               -> throwError (ValueError typeV)
@@ -419,7 +437,7 @@ checkComputation state (EAct (EReplace value behaviour)) = do
 
 -- EXCEPTION HANDLING
 -- T-RAISE
-checkComputation state (EAct (ERaise ty)) = return (ty, SAny)
+checkComputation state (EAct (ERaise)) = return (TAny, SAny)
 
 -- T-TRY
 checkComputation state (ETry action comp) = do
@@ -433,8 +451,8 @@ checkComputation state (ETry action comp) = do
 -- T-CONN
 checkComputation state (EAct (EConnect label valueV valueW role)) = do
   (typeA, session') <- getConnectAction (session state) role label
-  typeV <- checkValue (typeEnv state) valueV
-  typeW <- checkValue (typeEnv state) valueW
+  typeV <- checkValue state valueV
+  typeW <- checkValue state valueW
   sessionType' <- getSessionTypeOfRole (protocols state) role
 
   compareTypes (typeAliases state) typeV typeA
@@ -445,7 +463,7 @@ checkComputation state (EAct (EConnect label valueV valueW role)) = do
 -- T-SEND
 checkComputation state (EAct (ESend label value role)) = do
   (typeA, session') <- getSendAction (session state) role label
-  typeV <- checkValue (typeEnv state) value
+  typeV <- checkValue state value
 
   compareTypes (typeAliases state) typeV typeA
   return (Unit, session')
@@ -484,6 +502,8 @@ checkComputation state (ESequence comp1 comp2) = do
   -- compareTypes (typeAliases state) ty Unit
   (ty', session') <- checkComputation state{session=session} comp2
   return (ty', session')
+
+
 
 
 

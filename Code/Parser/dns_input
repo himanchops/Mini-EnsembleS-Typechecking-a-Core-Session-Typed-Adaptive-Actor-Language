@@ -1,77 +1,69 @@
-type RootSession = Client ?? RootRequest(String) . (Client ! TLDResponse(String) . ##Client) +
+type RootSession = Client ?? RootRequest(String) . (Client ! TLDResponse(Pid(ZoneSession)) . ##Client) +
                                                    (Client ! InvalidTLD(String) . ##Client)
 type ZoneSession = Client ?? ResolutionRequest(String) . (Client ! PartialResolution(Pid(ZoneSession)) . ##Client) + 
                                                          (Client ! InvalidDomain(String) . ##Client) +
                                                          (Client ! ResolutionComplete(String) . ##Client)
 type ClientSession = Root !! RootRequest(String) . (Root ? InvalidTLD(String) . #Root . end) +
-                        (Root ? TLDResponse(String) . #Root . rec lookup . ZS !! ResolutionRequest(String)
-                        . (ZS ?? PartialResolution(String) . #ZS . lookup) +
-                          (ZS ?? InvalidDomain(String) . #ZS . end) +
-                          (ZS ?? ResolutionComplete(String) . #ZS . end))
+                        (Root ? TLDResponse(Pid(ZoneSession)) . #Root . ZS !! ResolutionRequest(String) . rec lookup . (ZS ?? PartialResolution(Pid(ZoneSession)) . #ZS . lookup) +
+                                                    (ZS ?? InvalidDomain(String) . #ZS . end) +
+                                                    (ZS ?? ResolutionComplete(String) . #ZS . end))
 
 actor Client follows (ClientSession) {
-  let RootServer <= discover RootSession in
-  connect RootRequest("uk") to RootServer as Root;
+  let rootServer <= discover RootSession in
+  connect RootRequest("uk") to rootServer as Root;
   receive from Root {
     TLDResponse(zoneServerAddr) ->
       wait Root;
-      connect ResolutionRequest("www.gla.ac.uk") to zoneServerAddr as ZS;
+      connect ResolutionRequest("wwwglaacuk") to zoneServerAddr as ZS;
       lookup ::
         receive from ZS {
-          PartialResolution(pid) ->
+          PartialResolution(pidZS) ->
             wait ZS;
-            connect ResolutionRequest("www.gla.ac.uk") to pid as ZS; 
+            connect ResolutionRequest("wwwglaacuk") to pidZS as ZS; 
             continue lookup
-          InvalidDomain("String") ->
+          InvalidDomain(string) ->
             wait ZoneServer
-          ResolutionComplete("IPAddress") ->
+          ResolutionComplete(ipAddress) ->
             wait ZoneServer
         }
-    InvalidTLD("String") ->
+    InvalidTLD(string) ->
       wait Root
   }
 }
+
 actor RootServer follows (RootSession) {
   accept from Client {
-    RootRequest("uk") ->
-      send TLDResponse("ZoneServerAddress") to Client;
-      disconnect from Client
-    RootRequest("abcd") ->
-      send InvalidTLD("String") to Client;
-      disconnect from Client
-  }
-}
-actor ZoneServer1 follows (ZoneSession) {
-  accept from Client {
-    ResolutionRequest("DomainName") ->
-      send PartialResolution("ZoneServerAddress") to Client;
-      disconnect from Client
-    ResolutionRequest(DomainName) ->
-      send InvalidDomain(String) to Client;
-      disconnect from Client
-    ResolutionRequest(DomainName) ->
-      send ResolutionComplete(IPAddress) to Client;
-      disconnect from Client
-  }
-}
-actor ZoneServer2 follows (ZoneSession) {
-  accept from Client {
-    ResolutionRequest("DomainName") ->
-      send PartialResolution("ZoneServerAddress") to Client;
-      disconnect from Client
-    ResolutionRequest(DomainName) ->
-      send InvalidDomain(String) to Client;
-      disconnect from Client
-    ResolutionRequest(DomainName) ->
-      send ResolutionComplete(IPAddress) to Client;
-      disconnect from Client
+    RootRequest(ext) ->
+      if (ext == "uk") {
+        let zoneServerAddr <= discover ZoneServer in
+        send TLDResponse(zoneServerAddr) to Client;
+        disconnect from Client
+      }
+      else {
+        send InvalidTLD("Invalid") to Client;
+        disconnect from Client
+      }
   }
 }
 
+actor ZoneServer1 follows (ZoneSession) {
+  accept from Client {
+    ResolutionRequest(domainName) ->
+      if (domainName == "wwwglaacuk") {
+        send ResolutionComplete("a1111") to Client;
+        disconnect from Client
+      }
+      else {
+        send InvalidDomain("Invalid") to Client;
+        disconnect from Client
+      }
+  }
+}
 
 Root : RootSession
 ZS : ZoneSession
 Client : ClientSession
+
 boot {
  new Client
 }
