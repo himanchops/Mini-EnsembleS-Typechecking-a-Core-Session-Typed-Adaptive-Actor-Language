@@ -13,6 +13,7 @@ import Text.Megaparsec.Char
 import qualified Data.Text as T
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Data.Text.IO as TI
+import System.Environment
 
 
 type Parser = Parsec Void Text
@@ -61,7 +62,7 @@ pUpperCase = (lexeme . try) p
 
 type Label = String
 type Binder = String
-type Choices = [(Label, EValue, Computation)]
+type Choices = [(Label, Binder, Computation)]
 type RecursionVar = String
 type SessionTypeName = String
 -- Actor Name
@@ -143,6 +144,7 @@ pVUnit = do
 
 convertInt int = let i = read int :: Int in i
 
+-- Accepting space separate values
 pVString :: Parser EValue
 pVString = do
   str <- quotes identifier
@@ -269,10 +271,10 @@ pConnect = try $ do
   return $ EConnect label vValue wValue roleName
 
 
-pChoice :: Parser (Label, EValue, Computation)
+pChoice :: Parser (Label, Binder, Computation)
 pChoice = try $ do
   label <- identifier
-  value <- parens pValue
+  value <- parens identifier
   reserved "->"
   computation <- pComputation
   return (label, value, computation)
@@ -295,7 +297,7 @@ pReceiveSingle :: Parser EAction
 pReceiveSingle = try $ do
   reserved "receive"
   label <- identifier
-  value <- parens pValue
+  value <- parens identifier
   reserved "from"
   role <- identifier
   reserved ";"
@@ -306,7 +308,7 @@ pAcceptSingle :: Parser EAction
 pAcceptSingle = try $ do
   reserved "accept"
   label <- identifier
-  value <- parens pValue
+  value <- parens identifier
   reserved "from"
   role <- identifier
   reserved ";"
@@ -589,5 +591,11 @@ pProgram = do
 
 
 main = do
-  input <- TI.readFile "store_input"
+  args <- getArgs
+  -- input <- TI.readFile "store_input"
+  input <- TI.readFile $ head args
   parseTest pProgram input
+
+
+
+-- TAKING SPACE SEPARATED STRINGS IN "<value>"

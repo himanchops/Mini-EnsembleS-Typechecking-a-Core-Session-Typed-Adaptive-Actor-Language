@@ -10,7 +10,7 @@ import qualified Data.Map as Map
 
 type Label = String
 type Binder = String
-type Choices = [(Label, EValue, Computation)]
+type Choices = [(Label, Binder, Computation)]
 type RecursionVar = String
 type SessionTypeName = String
 -- Actor Name
@@ -143,6 +143,9 @@ type TypeCheck = Either Error
 Equi-recursive multiple comparisons
 Raise [TYPE] / Raise Any
 
+Receive label (value), what value?
+Assigment of value in code not possible yet. Add var?
+
 -}
 
 
@@ -162,8 +165,8 @@ compareTypes tA t1 t2               = if t1 /= t2 then throwError (IncompatibleT
 compareSessions :: [TypeAlias] -> SessionType -> SessionType -> TypeCheck SessionType
 compareSessions tA SAny s = return s
 compareSessions tA s SAny = return s
-compareSessions tA s1 s2 = getAlias tA s1 >>= \s1' ->
-  getAlias tA s2 >>= \s2' ->
+compareSessions tA s1 s2 = getAlias tA s1 >>= resolveSessionType >>= \s1' ->
+  getAlias tA s2 >>= resolveSessionType >>= \s2' ->
   if s1' /= s2' then throwError (SessionMismatch s1 s2) else return s1
 
 
@@ -266,15 +269,12 @@ getReceiveAction _ role label = throwError (BranchError role label)
 -- Returns list of (Type, SessionType) of all the branches/choices in ACCEPT SessionAction
 getAcceptBranches :: State -> Role -> Choices -> TypeCheck [(Type, SessionType)]
 getAcceptBranches state role choices = do
-  actionsList <- mapM (\(label, value, computation) ->
+  actionsList <- mapM (\(label, binder, computation) ->
     getAlias (typeAliases state) (session state) >>= \session ->
     getAcceptAction session role label >>= \act ->
-    return (value, act, computation)) choices
-  results <- mapM (\(value, (tyI, sessionI), computation) ->
-    case value of
-      (EVar v) -> checkComputation state{typeEnv=(v,tyI):(typeEnv state), session=sessionI} computation
-      _        -> checkComputation state{typeEnv=(typeEnv state), session=sessionI} computation
-    )
+    return (binder, act, computation)) choices
+  results <- mapM (\(binder, (tyI, sessionI), computation) ->
+    checkComputation state{typeEnv=(binder,tyI):(typeEnv state), session=sessionI} computation)
     actionsList
   return results
 
@@ -286,11 +286,8 @@ getReceiveBranches state role choices = do
     getAlias (typeAliases state) (session state) >>= \session ->
     getReceiveAction session role label >>= \act ->
     return (value, act, computation)) choices
-  results <- mapM (\(value, (tyI, sessionI), computation) ->
-    case value of
-      (EVar v) -> checkComputation state{typeEnv=(v,tyI):(typeEnv state), session=sessionI} computation
-      _        -> checkComputation state{typeEnv=(typeEnv state), session=sessionI} computation
-      )
+  results <- mapM (\(binder, (tyI, sessionI), computation) ->
+    checkComputation state{typeEnv=(binder,tyI):(typeEnv state), session=sessionI} computation)
     actionsList
   return results
 
@@ -509,33 +506,3 @@ checkProgram (typeAliases, actorDefs, protocols, computation) = do
   mapM_ (checkActorDef state) actorDefs
   checkComputation state{followST=SEnd, session=SEnd} computation
   return ()
-
-
-
-
-
-f (x,_,_,_) = x
-s (_,x,_,_) = x
-t (_,_,x,_) = x
-
-m = do
-  let p = ([SessionTypeAlias (STypeIdentifier "Customer") (SAction [(SConnect "Store" "login" TString,SRecursion "browse" (SAction [(SSend "Store" "item" TString,SAction [(SReceive "Store" "price" TInt,SRecursionVar "browse")])]))])
-           ,SessionTypeAlias (STypeIdentifier "Store") (SAction [(SAccept "Customer" "login" TString,SRecursion "browse" (SAction [(SReceive "Customer" "item" TString,SAction [(SSend "Customer" "price" TInt,SRecursionVar "browse")]),(SReceive "Customer" "address" TString,SAction [(SConnect "Courier" "deliver" TString,SAction [(SReceive "Courier" "ref" TInt,SAction [(SWait "Courier",SAction [(SSend "Customer" "ref" TInt,SDisconnect "Customer")])])])]),(SReceive "Customer" "quit" Unit,SDisconnect "Customer")]))])
-           ,SessionTypeAlias (STypeIdentifier "Courier") (SAction [(SAccept "Store" "deliver" TString,SAction [(SSend "Store" "ref" TInt,SDisconnect "Store")])])]
-          ,[EActorDef "CustomerActor" (STypeIdentifier "Customer") (EAssign "pid" (EAct (EDiscover (STypeIdentifier "Store"))) (ESequence (EAct (EConnect "login" (EString "credentials") (EVar "pid") "Store")) (ERecursion "browse" (ESequence (EAct (ESend "item" (EString "name") "Store")) (EAct (EReceive "Store" [("price",EInt 100,EAct (EContinue "browse"))])))))),EActorDef "StoreActor" (STypeIdentifier "Store") (EAct (EAccept "Customer" [("login",EString "credentials",ERecursion "browse" (EAct (EReceive "Customer" [("item",EString "name",ESequence (EAct (ESend "price" (EInt 20) "Customer")) (EAct (EContinue "browse"))),("address",EString "addr",EAssign "pid" (EAct (EDiscover (STypeIdentifier "Courier"))) (ESequence (EAct (EConnect "deliver" (EString "addr") (EVar "pid") "Courier")) (EAct (EReceive "Courier" [("ref",EInt 100,ESequence (EAct (EWait "Courier")) (ESequence (EAct (ESend "ref" (EInt 100) "Customer")) (EAct (EDisconnect "Customer"))))])))),("quit",EUnit,EAct (EDisconnect "Customer"))])))])),EActorDef "CourierActor" (STypeIdentifier "Courier") (EAct (EAccept "Store" [("deliver",EString "addr",ESequence (EAct (ESend "ref" (EInt 100) "Store")) (EAct (EDisconnect "Store")))]))],[Protocol "Store" (STypeIdentifier "Store"),Protocol "Customer" (STypeIdentifier "Customer"),Protocol "Courier" (STypeIdentifier "Courier")],EAct (ENew "Customer"))
-  let st = State {actorDefs = (s p)
-                ,typeAliases = (f p)
-                ,protocols = (t p)
-                , typeEnv = []
-                , recEnv = []
-                , followST = (SAction [(SAccept "Customer" "login" TString,SRecursion "browse" (SAction [(SReceive "Customer" "item" TString,SAction [(SSend "Customer" "price" TInt,SRecursionVar "browse")]),(SReceive "Customer" "address" TString,SAction [(SConnect "Courier" "deliver" TString,SAction [(SReceive "Courier" "ref" TInt,SAction [(SWait "Courier",SAction [(SSend "Customer" "ref" TInt,SDisconnect "Customer")])])])]),(SReceive "Customer" "quit" Unit,SDisconnect "Customer")]))])
-                , session = (SAction [(SReceive "Customer" "item" TString,SAction [(SSend "Customer" "price" TInt,SRecursion "browse" (SAction [(SReceive "Customer" "item" TString,SAction [(SSend "Customer" "price" TInt,SRecursionVar "browse")]),(SReceive "Customer" "address" TString,SAction [(SConnect "Courier" "deliver" TString,SAction [(SReceive "Courier" "ref" TInt,SAction [(SWait "Courier",SAction [(SSend "Customer" "ref" TInt,SDisconnect "Customer")])])])]),(SReceive "Customer" "quit" Unit,SDisconnect "Customer")]))]),(SReceive "Customer" "address" TString,SAction [(SConnect "Courier" "deliver" TString,SAction [(SReceive "Courier" "ref" TInt,SAction [(SWait "Courier",SAction [(SSend "Customer" "ref" TInt,SDisconnect "Customer")])])])]),(SReceive "Customer" "quit" Unit,SDisconnect "Customer")])
-                }
-  getReceiveAction (session st) "Customer" "address"
-  -- checkComputation st (EAct (EReceive "Customer" [("item",EString "name",ESequence (EAct (ESend "price" (EInt 20) "Customer")) (EAct (EContinue "browse"))),("address",EString "addr",EAssign "pid" (EAct (EDiscover (STypeIdentifier "Courier"))) (ESequence (EAct (EConnect "deliver" (EString "addr") (EVar "pid") "Courier")) (EAct (EReceive "Courier" [("ref",EInt 100,ESequence (EAct (EWait "Courier")) (ESequence (EAct (ESend "ref" (EInt 100) "Customer")) (EAct (EDisconnect "Customer"))))])))),("quit",EUnit,EAct (EDisconnect "Customer"))]))
-
-
-
-
--- SAction [(SConnect "Pong" "label" Unit ,SRecursion "x" (SAction [(SSend "Pong" "ping" Unit,SRecursionVar "x")]))]
--- SRecursion "browse" (SAction [(SSend "Store" "item" TString,SAction [(SReceive "Store" "price" TInt,SRecursionVar "browse")])])

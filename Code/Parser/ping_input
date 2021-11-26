@@ -4,12 +4,12 @@ actor PingerActor follows (PingerSession) {
     let pid <= discover PongerSession in
     connect ping(()) to pid as Ponger;
     receive from Ponger {
-        pong(()) -> wait Ponger
+        pong(x) -> wait Ponger
     }
 }
 actor PongerActor follows (PongerSession) {
     accept from Pinger {
-        ping(()) ->
+        ping(x) ->
             send pong(()) to Pinger;
             disconnect from Pinger
     }

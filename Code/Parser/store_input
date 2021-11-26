@@ -14,7 +14,7 @@ actor CustomerActor1 follows (Customer) {
     connect login("credentials") to pid as Store;
     browse ::
       send item("item") to Store;
-      receive price(100) from Store;
+      receive price(x) from Store;
       continue browse
 }
 
@@ -23,8 +23,8 @@ actor CustomerActor2 follows (Customer) {
     let pid <= discover Store in
     connect login("credentials") to pid as Store;
     browse ::
-      send address("addr") to Store;
-      receive ref(100) from Store;
+      send address("KelvinhaughStreet") to Store;
+      receive ref(x) from Store;
       wait Store
 }
 
@@ -38,26 +38,26 @@ actor CustomerActor3 follows (Customer) {
 }
 
 actor StoreActor follows (Store) {
-	accept login("credentials") from Customer;
+	accept login(credentials) from Customer;
 	browse ::
 	  receive from Customer {
-	    item("name") ->
+	    item(itemName) ->
 	      send price(20) to Customer;
 	      continue browse
-	    address("addr") ->
+	    address(addr) ->
 	      let pid <= discover Courier in
-	      connect deliver("addr") to pid as Courier;
-	      receive ref(100) from Courier;
+	      connect deliver(addr) to pid as Courier;
+	      receive ref(x) from Courier;
 	      wait Courier;
-	      send ref(100) to Customer;
+	      send ref(x) to Customer;
 	      disconnect from Customer
-	    quit(()) -> disconnect from Customer
+	    quit(x) -> disconnect from Customer
 	  }
 }
 
 
 actor CourierActor follows (Courier) {
-    accept deliver("addr") from Store;
+    accept deliver(addr) from Store;
     send ref(100) to Store;
     disconnect from Store
 }
@@ -67,5 +67,9 @@ Customer : Customer
 Courier : Courier
 
 boot{
-    new Customer1
+    new StoreActor;
+    new CourierActor;
+    new CustomerActor1;
+    new CustomerActor2;
+    new CustomerActor3
 }

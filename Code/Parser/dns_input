@@ -1,6 +1,6 @@
 type RootSession = Client ?? RootRequest(String) . (Client ! TLDResponse(String) . ##Client) +
                                                    (Client ! InvalidTLD(String) . ##Client)
-type ZoneSession = Client ?? ResolutionRequest(String) . (Client ! PartialResolution(String) . ##Client) + 
+type ZoneSession = Client ?? ResolutionRequest(String) . (Client ! PartialResolution(Pid(ZoneSession)) . ##Client) + 
                                                          (Client ! InvalidDomain(String) . ##Client) +
                                                          (Client ! ResolutionComplete(String) . ##Client)
 type ClientSession = Root !! RootRequest(String) . (Root ? InvalidTLD(String) . #Root . end) +
@@ -8,21 +8,23 @@ type ClientSession = Root !! RootRequest(String) . (Root ? InvalidTLD(String) . 
                         . (ZS ?? PartialResolution(String) . #ZS . lookup) +
                           (ZS ?? InvalidDomain(String) . #ZS . end) +
                           (ZS ?? ResolutionComplete(String) . #ZS . end))
+
 actor Client follows (ClientSession) {
   let RootServer <= discover RootSession in
-  connect RootRequest("DomainName") to RootServer as Root;
+  connect RootRequest("uk") to RootServer as Root;
   receive from Root {
-    TLDResponse("ZoneServerAddress") ->
+    TLDResponse(zoneServerAddr) ->
       wait Root;
+      connect ResolutionRequest("www.gla.ac.uk") to zoneServerAddr as ZS;
       lookup ::
-        connect ResolutionRequest(DomainName) to ZoneServer as ZS;
         receive from ZS {
-          PartialResolution(ZoneServerAddress) ->
+          PartialResolution(pid) ->
             wait ZS;
+            connect ResolutionRequest("www.gla.ac.uk") to pid as ZS; 
             continue lookup
-          InvalidDomain(String) ->
+          InvalidDomain("String") ->
             wait ZoneServer
-          ResolutionComplete(IPAddress) ->
+          ResolutionComplete("IPAddress") ->
             wait ZoneServer
         }
     InvalidTLD("String") ->
@@ -31,15 +33,15 @@ actor Client follows (ClientSession) {
 }
 actor RootServer follows (RootSession) {
   accept from Client {
-    RootRequest("DomainName") ->
+    RootRequest("uk") ->
       send TLDResponse("ZoneServerAddress") to Client;
       disconnect from Client
-    RootRequest("something_else") ->
+    RootRequest("abcd") ->
       send InvalidTLD("String") to Client;
       disconnect from Client
   }
 }
-actor ZoneServer follows (ZoneSession) {
+actor ZoneServer1 follows (ZoneSession) {
   accept from Client {
     ResolutionRequest("DomainName") ->
       send PartialResolution("ZoneServerAddress") to Client;
@@ -52,6 +54,21 @@ actor ZoneServer follows (ZoneSession) {
       disconnect from Client
   }
 }
+actor ZoneServer2 follows (ZoneSession) {
+  accept from Client {
+    ResolutionRequest("DomainName") ->
+      send PartialResolution("ZoneServerAddress") to Client;
+      disconnect from Client
+    ResolutionRequest(DomainName) ->
+      send InvalidDomain(String) to Client;
+      disconnect from Client
+    ResolutionRequest(DomainName) ->
+      send ResolutionComplete(IPAddress) to Client;
+      disconnect from Client
+  }
+}
+
+
 Root : RootSession
 ZS : ZoneSession
 Client : ClientSession
