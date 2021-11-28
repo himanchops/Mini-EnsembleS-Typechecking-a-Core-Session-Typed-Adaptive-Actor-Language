@@ -85,12 +85,17 @@ type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
 
 {-
+
+
+M;N is not equal to that
+
+
 https://homepages.inf.ed.ac.uk/wadler/papers/marktoberdorf/baastad.pdf
 http://www.dcs.gla.ac.uk/~ornela/projects/Artem%20Usov.pdf
 -}
 
 type TypeEnv = [(String, Type)]
-type RecEnv = [(String, SessionType)]
+type RecEnv = [(Label, SessionType)]
 
 
 data State = State { actorDefs :: [ActorDef]
@@ -141,11 +146,8 @@ type TypeCheck = Either Error
 
 
 {-
-
-Equi-recursive multiple comparisons
-Receive label (value), what value?
-Assigment of value in code not possible yet. Add var?
-
+What type of l have you used for recursion labels?
+M;N, fresh variable
 -}
 
 
@@ -500,6 +502,7 @@ checkComputation state (EAct (EDisconnect role)) = do
 checkComputation state (ESequence comp1 comp2) = do
   (ty, session)   <- checkComputation state comp1
   -- compareTypes (typeAliases state) ty Unit
+  -- MUST ADD ty to a fresh variable and into the typeEnv
   (ty', session') <- checkComputation state{session=session} comp2
   return (ty', session')
 

@@ -84,6 +84,7 @@ data EValue = EVar String
   | EBool Bool
   | EUnit
   | ECompare EValue EValue
+-- CHANGE TO A COMPUTATION
   deriving (Show)
 -- Actions
 data EAction = EReturn EValue
@@ -100,6 +101,7 @@ data EAction = EReturn EValue
   | EWait Role
   | EDisconnect Role
   | ECondition EValue Computation Computation
+  -- CHANGE EVALUE TO A COMPUTATION EQUALITY THAT GIVES OUT A BOOL
   deriving (Show)
 -- Computations
 data Computation = EAssign Binder Computation Computation
