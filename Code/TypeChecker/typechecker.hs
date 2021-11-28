@@ -33,7 +33,6 @@ data EValue = EVar String
   | EInt Int
   | EBool Bool
   | EUnit
-  | ECompare EValue EValue
   deriving (Eq, Ord, Show)
 -- Actions
 data EAction = EReturn EValue
@@ -49,7 +48,9 @@ data EAction = EReturn EValue
   | EReceive Role Choices
   | EWait Role
   | EDisconnect Role
-  | ECondition EValue Computation Computation
+  | ECondition EAction Computation Computation
+  | EEquality EValue EValue
+  | EInequality EValue EValue
   deriving (Show)
 -- Computations
 data Computation = EAssign Binder Computation Computation
@@ -123,6 +124,7 @@ data Error = UnboundVariable String
         | RoleMismatch Role
         | UndefinedAlias SessionType
         | ExpectedPID Type
+        | CompareActionExpected EAction
 
 instance Show Error where
   show (UnboundVariable val) = "Unbounded variable: " ++ (show val)
@@ -138,7 +140,7 @@ instance Show Error where
   show (RoleMismatch role) = "Mismatched Role " ++ show role
   show (UndefinedAlias session) = "Session " ++ show session ++ " has no defined type alias"
   show (ExpectedPID ty) = "Type error for type " ++ show ty ++ ". Expected PID"
-
+  show (CompareActionExpected act) = "Expected comparison action; Actual action : " ++ show act
 type TypeCheck = Either Error
 
 
@@ -332,6 +334,25 @@ substST (SAction actionChoices) recSession x =
 
 
 
+-- Checks if parametrized action is a valid comparison action,
+-- checks if both values are of the same type and returns the type
+checkComparison state (EEquality val1 val2) = do
+  ty1 <- checkValue state val1
+  ty2 <- checkValue state val2
+  ty <- compareTypes (typeAliases state) ty1 ty2
+  return TBool
+
+checkComparison state (EInequality val1 val2) = do
+  ty1 <- checkValue state val1
+  ty2 <- checkValue state val2
+  ty <- compareTypes (typeAliases state) ty1 ty2
+  return TBool
+
+checkComparison state act = throwError (CompareActionExpected act)
+
+
+
+
 
 
 checkBehaviour :: State -> Behaviour -> TypeCheck ()
@@ -365,15 +386,6 @@ checkValue state (EVar string) = do
       Just t -> return t
       Nothing -> throwError (UnboundVariable string)
 
--- T-COMPARE
-checkValue state (ECompare val1 val2) = do
-  ty1 <- checkValue state val1
-  ty2 <- checkValue state val2
-  ty <- compareTypes (typeAliases state) ty1 ty2
-  return TBool
-
-
-
 -- T-BODY
 checkComputation :: State -> Computation -> TypeCheck (Type, SessionType)
 -- FUNCTIONAL RULES
@@ -403,14 +415,15 @@ checkComputation state (EAct (EReturn value)) = do
 
 
 -- T-CONDITION
-checkComputation state (EAct (ECondition val comp1 comp2)) = do
-  ty <- checkValue state val
+checkComputation state (EAct (ECondition act comp1 comp2)) = do
+  ty <- checkComparison state act
   compareTypes (typeAliases state) ty TBool
   (ty1, ses1) <- checkComputation state comp1
   (ty2, ses2) <- checkComputation state comp2
   ty' <- compareTypes (typeAliases state) ty1 ty2
   ses' <- compareSessions (typeAliases state) ses1 ses2
   return (ty', ses')
+
 
 
 

@@ -83,8 +83,6 @@ data EValue = EVar String
   | EInt Int
   | EBool Bool
   | EUnit
-  | ECompare EValue EValue
--- CHANGE TO A COMPUTATION
   deriving (Show)
 -- Actions
 data EAction = EReturn EValue
@@ -100,8 +98,9 @@ data EAction = EReturn EValue
   | EReceive Role Choices
   | EWait Role
   | EDisconnect Role
-  | ECondition EValue Computation Computation
-  -- CHANGE EVALUE TO A COMPUTATION EQUALITY THAT GIVES OUT A BOOL
+  | ECondition EAction Computation Computation
+  | EEquality EValue EValue
+  | EInequality EValue EValue
   deriving (Show)
 -- Computations
 data Computation = EAssign Binder Computation Computation
@@ -168,14 +167,6 @@ pVBoolFalse :: Parser EValue
 pVBoolFalse = do
   string' "false" *> notFollowedBy alphaNumChar *> sc
   return $ EBool False
-
-pCompare :: Parser EValue
-pCompare = try $ do
-  val1 <- pValue
-  symbol "=="
-  val2 <- pValue
-  return $ ECompare val1 val2
-
 
 pValue :: Parser EValue
 pValue = choice
@@ -355,10 +346,29 @@ pDisconnect = try $ do
 
 
 
+
+pEquality :: Parser EAction
+pEquality = try $ do
+  val1 <- pValue
+  symbol "=="
+  val2 <- pValue
+  return $ EEquality val1 val2
+
+pInequality :: Parser EAction
+pInequality = try $ do
+  val1 <- pValue
+  symbol "/="
+  val2 <- pValue
+  return $ EInequality val1 val2
+
+pCompare :: Parser EAction
+pCompare = pInequality <|> pEquality
+
 pCondition :: Parser EAction
 pCondition = do
   reserved "if"
   val <- parens pCompare
+  reserved "then"
   comp1 <- braces pComputation
   reserved "else"
   comp2 <- braces pComputation
