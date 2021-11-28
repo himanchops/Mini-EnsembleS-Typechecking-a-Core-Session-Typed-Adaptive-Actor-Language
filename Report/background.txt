@@ -101,7 +101,7 @@ Rule T-CONTINUE : This rule ensures that for the construct continue l, the pre-c
 {T} Γ | S ▷ N :A ◁ S′
 {T} Γ | S ▷ if V then M else N : A ◁ S′
 
-Rule T-CONDITION : Given the construct if V then M else N, where type of V is a bool, M with pre-condition S, gives type A and post-condition S′, and N with pre-condition S give the same type A and post-condition S′, the overall construct has a pre-condition S and post-condition S′ with type A. This rule provides with a conditional statement.
+Rule T-CONDITION : Given the construct if L then M else N, where type of L is one of the defined comparison actions that return the type bool, M with pre-condition S, gives type A and post-condition S′, and N with pre-condition S give the same type A and post-condition S′, the overall construct has a pre-condition S and post-condition S′ with type A. This rule provides with a conditional statement.
 
 
 ACTOR ADAPTION RULES

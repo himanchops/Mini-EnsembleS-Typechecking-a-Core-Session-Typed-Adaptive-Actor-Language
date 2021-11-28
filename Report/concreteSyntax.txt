@@ -1,0 +1,72 @@
+In this section, we discuss the concrete syntax developed to implement the core calculus discussed in section _. Since the calculus is minimalistic, the syntax developed is very clean and concise, and resembles the calculus to ensure readability and adaptability.
+
+Mini-EnsembleS programs can be represented as a set of (T, D, P, M), where T is a collection of session type aliases. Type aliases provide alternative names for defining session types. Since interactions in multiparty sesion types can be quite complicated and go beyond a simple call/return expression, type aliases provide a convinient alternative to refer the rather lengthy session type definitions. D is a list of all the Actor Definitions in the program, and P is the list of protocols specified, mapping participant roles to respective session types. M is the initial computation term in the 'boot' clause for initiating the actor communications.
+
+Programs written in Mini-EnsembleS must follow a strict specification as to the sequence of declarations. Use of CamelCase is encouraged for the naming convention of all strings and variables in the syntax.
+
+Concrete Syntax for TYPES and TERMS
+All type aliases must be defined together at the start of the program. A minimal syntax for the same is: type <SessionTypeName> = <SessionType>. Care must be taken that the identifier of the session type i.e. <SessionTypeName> must be capitalized.
+
+This must be followed by all the actor definitions, each of the syntax: actor <actorName> follows (<sessionType>) {<computation>}. <actorName> can be any valid string beginning with a character, without any spaces or special symbols in the name.
+
+All the protocol definitions should be defined next. The syntax for a protcols is <role> : <sessionType>. These can simply be defined together one after another.
+
+Following all definitions, a Mini-EnsembleS must have a 'boot' clause for the initial computation term. The syntax for the same looks like this: boot {<computation>}
+
+
+Values written in quotes will be treated as strings, for instance "hello world" will be parsed as EString "hello world"; integers like 123 will be translated directly like EInt 123; case-insensitive input of boolean values such as true/True or false/False will be parsed as EBool True and EBool False respectively. Any other input in appropriate value position will be treated as a variable name and interpreted as EVar <varName>.
+Actions defined in the calculus should have one of the following syntaxes:
+	return <value>
+	continue <label>
+	raise
+	if <action> then <computation> else <computation>
+	<value> == <value>
+	<value> /= <value>
+	new <actorName>
+	self
+	replace <value> with <behaviour>
+	discover <sessionType>
+	connect <label>(<value>) to <value> as <role>
+	accept from <role> { case <label>(<value>) -> <computation> .. }
+		accept <label><value> from <role>; <computation>
+	send <label>(<value>) to <role>
+	receive from <role> { case <label>(<value>) -> <computation> .. }
+		receive <label><value> from <role>; <computation>
+	wait <role>
+	disconnect from <role>
+
+Computations defined in the syntax should be one of the following syntaxes:
+	let <binder> <= <compuation> in <compuation>
+		comp1; comp2
+	try <action> catch <compuation>
+	<label> :: <computation>
+		Owing to a design decision, a recursion label must always begin with a small case.
+	<action>
+		One of the actions defined here _
+
+SYNTAX FOR SESSION ACTIONS AND SESSION TYPES
+A type is generally passed as payload in the session type. This is used to validate that a particular communication action in a term has the matching value type in its session action. A type can be defined as one of the following:
+	Pid(<sessionType>) : The parameter <sessionType> refers to the statically-known defined initial session type.
+	unit : is used to indicate the Unit type.
+	string : is used to indiciate the TString type in communication.
+	int : indicating integer value, this is used to indicate the TInt type.
+	bool : refers to a boolean value, this is used to indicate the TBool type.
+The above type definitions are case-insensitive; recommended guideline is to insert these in lowercase.
+
+The generic form of communication actions is : <role> <sessionAction> <label> <type>
+Thus,
+	<role> ! <label>(<type>) represents a sending action.
+	<role> !! <label>(<type>) represents a connection action.
+	<role> ? <label>(<type>) represents a receive action.
+	<role> ?? <label>(<type>) represents a connection action.
+	#<role> indicates awaiting a participant's (<role>) disconnection.
+
+A session type can be a choice type of actions, which is written as Σi∈I(αi . Si) in calculus.
+We can write this syntactically as (<sessionAction>_i . <sessionType>_i) + .. + (<sessionAction>_n . <sessionType>_n), where each <sessionAction>_j is a valid session action. This '.' is used as a sequencing operator in defining such session types. A singleton choice can also be defined without paranthesis as <sessionAction> . <sessionType> as synctactic sugar. EXAMPLES
+A session type can be a defined as \mu X . S, where X is the binding recursion variable in continuation S, the syntax for which is as follows: 'rec <recursionVariable> . <sessionType>' . A session type can also be a recursion variable inside the continutation and can be defined as <recursionVariable>. Care must be taken that the recursionVariables begin with a small-case character to avoid confusion with a session type identifier.
+A session type can be a disconnection action in which case the syntax is ##<role>, indicating disconnection from participant <role>.
+A session type can be a finished session, for which the syntax is 'end'.
+In addition to these, a session type can also be identified using it's type alias. A design decision dictates that this must be capitalized string name, represented as <sessionTypeName>.
+EXAMPLES
+
+This concludes the syntax description for our language. Further extensions or alterations can be easily made to this syntax; the objective during the design process was to provide a syntax to support the fundamental calculus. Hence, the implementation is flexible in order to adapt and accomodate any changes or extensions to the concrete syntax.

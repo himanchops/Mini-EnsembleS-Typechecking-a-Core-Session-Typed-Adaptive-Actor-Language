@@ -189,22 +189,22 @@ pEpid = do
 
 pUnit :: Parser Type
 pUnit = do
-  reserved "Unit"
+  string' "unit" *> notFollowedBy alphaNumChar *> sc
   return Unit
 
 pString :: Parser Type
 pString = do
-  reserved "String"
+  string' "string" *> notFollowedBy alphaNumChar *> sc
   return TString
 
 pInt :: Parser Type
 pInt = do
-  reserved "Int"
+  string' "int" *> notFollowedBy alphaNumChar *> sc
   return TInt
 
 pBool :: Parser Type
 pBool = do
-  reserved "Bool"
+  string' "bool" *> notFollowedBy alphaNumChar *> sc
   return TBool
 
 pType :: Parser Type

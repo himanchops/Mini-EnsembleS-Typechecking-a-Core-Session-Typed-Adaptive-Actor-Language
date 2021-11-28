@@ -19,7 +19,7 @@ actor PongerActor follows (Pinger ?? ping(unit) . Pinger ! pong(unit) . ##Ponger
 
 
 #TYPE
-Pid(<sessionType>) | unit
+Pid(<sessionType>) | TString | TInt | TBool | Unit
 
 #ACTOR DEFINITION
 actor <actorName> follows (<sessionType>) {<computation>}
@@ -34,20 +34,23 @@ replace <value> with <behaviour>
 discover <sessionType>
 connect <label>(<value>) to <value> as <role>
 send <label>(<value>) to <role>
-wait <role>
-disconnect from <role>
 receive from <role> { case <label>(<value>) -> <computation> .. }
 receive <label><value> from <role>; <computation>
 accept from <role> { case <label>(<value>) -> <computation> .. }
 accept <label><value> from <role>; <computation>
+wait <role>
+disconnect from <role>
+if <action> then <computation> else <computation>
+<value> == <value>
+<value> /= <value>
 
 
 #COMPUTATION
 let <binder> <= <compuation> in <compuation>
+comp1; comp2
 try <action> catch <compuation>
 <label> :: <computation>
 <action>
-comp1; comp2
 
 
 #SESSION ACTIONS
@@ -58,7 +61,7 @@ comp1; comp2
 #<role>						//wait for disconnection
 
 #SESSION TYPE
-(<sessionAction>. <SessionType>) ..
+(<sessionAction>. <SessionType>)
 rec X.S
 X
 ##<role>							//disconnect
@@ -69,13 +72,11 @@ end
 #TYPE IDENTIFIER
 type <SessionTypeName> = <SessionType>
 
-
 #Protocol
 <role> : <sessionType>
 
 
-Main :: Parser Programs
+Main :: Parser Program
 Program = ([TypeAlias], [D], M)
 
-
-Difference between recursionVar and STypeIdentifier?
+SessionTypeName vs X
