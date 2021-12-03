@@ -48,7 +48,6 @@ data EAction = EReturn EValue
   | EReceive Role Choices
   | EWait Role
   | EDisconnect Role
-  | ECondition EAction Computation Computation
   | EEquality EValue EValue
   | EInequality EValue EValue
   deriving (Show)
@@ -57,6 +56,7 @@ data Computation = EAssign Binder Computation Computation
   | ETry EAction Computation
   | ERecursion Label Computation
   | EAct EAction
+  | ECondition EValue Computation Computation
   | ESequence Computation Computation
   deriving (Show)
 -- Session Actions
@@ -86,10 +86,7 @@ type Program = ([TypeAlias], [ActorDef], [Protocol], Computation)
 
 
 {-
-
-
-M;N is not equal to that
-
+What type of l have you used for recursion labels?
 
 https://homepages.inf.ed.ac.uk/wadler/papers/marktoberdorf/baastad.pdf
 http://www.dcs.gla.ac.uk/~ornela/projects/Artem%20Usov.pdf
@@ -111,47 +108,32 @@ data State = State { actorDefs :: [ActorDef]
 
 
 data Error = UnboundVariable String
-        | UnboundRecursionVariable String
-        | RecursionVariableMismatch String Type Type
-        | ActorNotDefined String
-        | ValueError Type
+        | UnboundRecursionVariable Label
+        | ActorNotDefined Actor
         | IncompatibleTypes Type Type
         | SessionMismatch SessionType SessionType
-        | BranchError Role Label
+        | BranchError Role Label String
         | BranchRoleError Role
         | SessionConsumptionError SessionType
         | UndefinedProtocol Role
         | RoleMismatch Role
         | UndefinedAlias SessionType
         | ExpectedPID Type
-        | CompareActionExpected EAction
 
 instance Show Error where
   show (UnboundVariable val) = "Unbounded variable: " ++ (show val)
   show (UnboundRecursionVariable label) = "Unbounded recursion variable at" ++ (show label)
   show (ActorNotDefined actor) = "Actor " ++ show actor ++ " is not defined"
-  show (ValueError value) = "Error at value: " ++ show value
   show (IncompatibleTypes t1 t2) = "Types: " ++ show t1 ++ " and " ++ show t2 ++ " are not compatible"
   show (SessionMismatch s1 s2) = "Mismatch of SessionTypes: " ++ show s1 ++ " and " ++ show s2
-  show (BranchError role label) = "SessionAction: " ++ show role ++ " " ++ show label ++ " does not exists"
-  show (BranchRoleError role) = "Role " ++ show role ++ " not found"
+  show (BranchError role label action) = show action ++ " action for role " ++ show role ++ " and label " ++ show label ++ " does not exist" 
+  show (BranchRoleError role) = "Action wait " ++ role ++ " not found"
   show (SessionConsumptionError session) = "Incomplete consumption of session: " ++ show session
   show (UndefinedProtocol role) = "Role " ++ show role ++ " has no defined protocol"
   show (RoleMismatch role) = "Mismatched Role " ++ show role
   show (UndefinedAlias session) = "Session " ++ show session ++ " has no defined type alias"
   show (ExpectedPID ty) = "Type error for type " ++ show ty ++ ". Expected PID"
-  show (CompareActionExpected act) = "Expected comparison action; Actual action : " ++ show act
 type TypeCheck = Either Error
-
-
-
-
-
-{-
-What type of l have you used for recursion labels?
-M;N, fresh variable
--}
-
 
 
 -- HELPER FUNCTIONS
@@ -207,7 +189,7 @@ getAlias _ session = return session
 
 -- Returns (Type, SessionType) of matching Role, Label in CONNECT SessionAction
 getConnectAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
-getConnectAction (SAction []) role label = throwError (BranchError role label)
+getConnectAction (SAction []) role label = throwError (BranchError role label "Connect")
 getConnectAction (SAction (x:xs)) role label = do
   case x of
     ((SConnect role' label' typeA),session) ->
@@ -215,12 +197,12 @@ getConnectAction (SAction (x:xs)) role label = do
         then return (typeA,session)
       else getConnectAction (SAction xs) role label
     _  -> getConnectAction (SAction xs) role label
-getConnectAction _ role label = throwError (BranchError role label)
+getConnectAction _ role label = throwError (BranchError role label "Connect")
 
 
 -- Returns (Type, SessionType) of matching Role, Label in SEND SessionAction
 getSendAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
-getSendAction (SAction []) role label = throwError (BranchError role label)
+getSendAction (SAction []) role label = throwError (BranchError role label "Send")
 getSendAction (SAction (x:xs)) role label = do
   case x of
     ((SSend role' label' typeA),session) ->
@@ -228,7 +210,7 @@ getSendAction (SAction (x:xs)) role label = do
         then return (typeA,session)
       else getSendAction (SAction xs) role label
     _  -> getSendAction (SAction xs) role label
-getSendAction _ role label = throwError (BranchError role label)
+getSendAction _ role label = throwError (BranchError role label "Send")
 
 
 -- Returns (Type, SessionType) of matching Role, Label in WAIT SessionAction
@@ -245,7 +227,7 @@ getWaitAction _ role = throwError (BranchRoleError role)
 
 -- Returns (Type, SessionType) of matching Role, Label in ACCEPT SessionAction
 getAcceptAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
-getAcceptAction (SAction []) role label = throwError (BranchError role label)
+getAcceptAction (SAction []) role label = throwError (BranchError role label "Accept")
 getAcceptAction (SAction (x:xs)) role label = do
   case x of
     ((SAccept role' label' typeA),session) ->
@@ -253,12 +235,12 @@ getAcceptAction (SAction (x:xs)) role label = do
         then return (typeA,session)
       else getAcceptAction (SAction xs) role label
     _  -> getAcceptAction (SAction xs) role label
-getAcceptAction _ role label = throwError (BranchError role label)
+getAcceptAction _ role label = throwError (BranchError role label "Accept")
 
 
 
 getReceiveAction :: SessionType -> Role -> Label -> TypeCheck (Type, SessionType)
-getReceiveAction (SAction []) role label = throwError (BranchError role label)
+getReceiveAction (SAction []) role label = throwError (BranchError role label "Receive")
 getReceiveAction (SAction (x:xs)) role label = do
   case x of
     ((SReceive role' label' typeA),session) ->
@@ -266,7 +248,7 @@ getReceiveAction (SAction (x:xs)) role label = do
         then return (typeA,session)
       else getReceiveAction (SAction xs) role label
     _  -> getReceiveAction (SAction xs) role label
-getReceiveAction _ role label = throwError (BranchError role label)
+getReceiveAction _ role label = throwError (BranchError role label "Receive")
 
 
 
@@ -334,25 +316,6 @@ substST (SAction actionChoices) recSession x =
 
 
 
--- Checks if parametrized action is a valid comparison action,
--- checks if both values are of the same type and returns the type
-checkComparison state (EEquality val1 val2) = do
-  ty1 <- checkValue state val1
-  ty2 <- checkValue state val2
-  ty <- compareTypes (typeAliases state) ty1 ty2
-  return TBool
-
-checkComparison state (EInequality val1 val2) = do
-  ty1 <- checkValue state val1
-  ty2 <- checkValue state val2
-  ty <- compareTypes (typeAliases state) ty1 ty2
-  return TBool
-
-checkComparison state act = throwError (CompareActionExpected act)
-
-
-
-
 
 
 checkBehaviour :: State -> Behaviour -> TypeCheck ()
@@ -369,7 +332,7 @@ checkBehaviour state (EComp comp) = do
 
 
 -- VALUE TYPING
-checkValue :: State -> EValue -> TypeCheck Type
+checkValue :: TypeEnv -> EValue -> TypeCheck Type
 -- T-UNIT
 checkValue _ EUnit       = return Unit
 -- T-STRING
@@ -380,8 +343,8 @@ checkValue _ (EBool _)   = return TBool
 checkValue _ (EInt _)    = return TInt
 
 -- T-VAR
-checkValue state (EVar string) = do
-  let returnType = Map.lookup string $ Map.fromList (typeEnv state) in
+checkValue typeEnv (EVar string) = do
+  let returnType = Map.lookup string $ Map.fromList typeEnv in
     case returnType of
       Just t -> return t
       Nothing -> throwError (UnboundVariable string)
@@ -410,13 +373,13 @@ checkComputation state (EAct (EContinue label)) = do
 
 -- T-RETURN
 checkComputation state (EAct (EReturn value)) = do
-  typeV <- checkValue state value
+  typeV <- checkValue (typeEnv state) value
   return (typeV, (session state))
 
 
 -- T-CONDITION
-checkComputation state (EAct (ECondition act comp1 comp2)) = do
-  ty <- checkComparison state act
+checkComputation state (ECondition val comp1 comp2) = do
+  ty <- checkValue (typeEnv state) val
   compareTypes (typeAliases state) ty TBool
   (ty1, ses1) <- checkComputation state comp1
   (ty2, ses2) <- checkComputation state comp2
@@ -425,6 +388,19 @@ checkComputation state (EAct (ECondition act comp1 comp2)) = do
   return (ty', ses')
 
 
+-- Checks if parametrized action is a valid comparison action,
+-- checks if both values are of the same type and returns the type
+checkComputation state (EAct (EEquality val1 val2)) = do
+  ty1 <- checkValue (typeEnv state) val1
+  ty2 <- checkValue (typeEnv state) val2
+  ty <- compareTypes (typeAliases state) ty1 ty2
+  return (TBool, (session state))
+
+checkComputation state (EAct (EInequality val1 val2)) = do
+  ty1 <- checkValue (typeEnv state) val1
+  ty2 <- checkValue (typeEnv state) val2
+  ty <- compareTypes (typeAliases state) ty1 ty2
+  return (TBool, (session state))
 
 
 -- ACTOR / ADAPTATION RULES
@@ -444,10 +420,10 @@ checkComputation state (EAct (EDiscover s)) = getAlias (typeAliases state) s >>=
 
 -- T-REPLACE
 checkComputation state (EAct (EReplace value behaviour)) = do
-  typeV <- checkValue state value
+  typeV <- checkValue (typeEnv state) value
   case typeV of
     (EPid sessionU) -> checkBehaviour (state {followST = sessionU}) behaviour
-    _               -> throwError (ValueError typeV)
+    _               -> throwError (ExpectedPID typeV)
   return (Unit, (session state))
 
 -- EXCEPTION HANDLING
@@ -466,8 +442,8 @@ checkComputation state (ETry action comp) = do
 -- T-CONN
 checkComputation state (EAct (EConnect label valueV valueW role)) = do
   (typeA, session') <- getConnectAction (session state) role label
-  typeV <- checkValue state valueV
-  typeW <- checkValue state valueW
+  typeV <- checkValue (typeEnv state) valueV
+  typeW <- checkValue (typeEnv state) valueW
   sessionType' <- getSessionTypeOfRole (protocols state) role
 
   compareTypes (typeAliases state) typeV typeA
@@ -478,7 +454,7 @@ checkComputation state (EAct (EConnect label valueV valueW role)) = do
 -- T-SEND
 checkComputation state (EAct (ESend label value role)) = do
   (typeA, session') <- getSendAction (session state) role label
-  typeV <- checkValue state value
+  typeV <- checkValue (typeEnv state) value
 
   compareTypes (typeAliases state) typeV typeA
   return (Unit, session')

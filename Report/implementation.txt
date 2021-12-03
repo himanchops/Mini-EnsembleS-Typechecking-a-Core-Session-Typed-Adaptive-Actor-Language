@@ -1,0 +1,5 @@
+IMPLEMENTATION
+
+This sections describes the concepts related to abstract syntax and its implementation in our project. The abstract syntax tree attempts to reflect just the most important features of our calculus's structure [figure_ref] while omitting non-essential, representation-dependent characteristics of the concrete syntax. In the concrete syntax presented in the preceding chapter [section_link], parentheses, for example, convey structural information. There is no need for parenthesis in the abstract syntax since this structural information may be conveyed directly in the abstract syntax.
+
+We can express abstract syntax trees in Haskell using algebraic data types. By employing pattern matching, such types typically allow us to express programs concisely. The project implements this 

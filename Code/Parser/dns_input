@@ -4,9 +4,9 @@ type ZoneSession = Client ?? ResolutionRequest(String) . (Client ! PartialResolu
                                                          (Client ! InvalidDomain(String) . ##Client) +
                                                          (Client ! ResolutionComplete(String) . ##Client)
 type ClientSession = Root !! RootRequest(String) . (Root ? InvalidTLD(String) . #Root . end) +
-                        (Root ? TLDResponse(Pid(ZoneSession)) . #Root . ZS !! ResolutionRequest(String) . rec lookup . (ZS ?? PartialResolution(Pid(ZoneSession)) . #ZS . lookup) +
-                                                    (ZS ?? InvalidDomain(String) . #ZS . end) +
-                                                    (ZS ?? ResolutionComplete(String) . #ZS . end))
+                        (Root ? TLDResponse(Pid(ZoneSession)) . #Root . ZS !! ResolutionRequest(String) . rec lookup . (ZS ? PartialResolution(Pid(ZoneSession)) . #ZS . ZS !! ResolutionRequest(String) . lookup) +
+                                    (ZS ? InvalidDomain(String) . #ZS . end) +
+                                    (ZS ? ResolutionComplete(String) . #ZS . end))
 
 actor Client follows (ClientSession) {
   let rootServer <= discover RootSession in
@@ -14,17 +14,17 @@ actor Client follows (ClientSession) {
   receive from Root {
     TLDResponse(zoneServerAddr) ->
       wait Root;
-      connect ResolutionRequest("wwwglaacuk") to zoneServerAddr as ZS;
+      connect ResolutionRequest("www.gla.ac.uk") to zoneServerAddr as ZS;
       lookup ::
         receive from ZS {
           PartialResolution(pidZS) ->
             wait ZS;
-            connect ResolutionRequest("wwwglaacuk") to pidZS as ZS; 
+            connect ResolutionRequest("www.gla.ac.uk") to pidZS as ZS; 
             continue lookup
           InvalidDomain(string) ->
-            wait ZoneServer
+            wait ZS
           ResolutionComplete(ipAddress) ->
-            wait ZoneServer
+            wait ZS
         }
     InvalidTLD(string) ->
       wait Root
@@ -34,8 +34,9 @@ actor Client follows (ClientSession) {
 actor RootServer follows (RootSession) {
   accept from Client {
     RootRequest(ext) ->
-      if (ext == "uk") {
-        let zoneServerAddr <= discover ZoneServer in
+      let v <= ext == "uk" in
+      if (v) then {
+        let zoneServerAddr <= discover ZoneSession in
         send TLDResponse(zoneServerAddr) to Client;
         disconnect from Client
       }
@@ -46,11 +47,12 @@ actor RootServer follows (RootSession) {
   }
 }
 
-actor ZoneServer1 follows (ZoneSession) {
+actor ZoneServer follows (ZoneSession) {
   accept from Client {
     ResolutionRequest(domainName) ->
-      if (domainName == "wwwglaacuk") {
-        send ResolutionComplete("a1111") to Client;
+      let val <= domainName == "www.gla.ac.uk" in
+      if (val) then {
+        send ResolutionComplete("IP127.1.11") to Client;
         disconnect from Client
       }
       else {

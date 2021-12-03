@@ -40,7 +40,7 @@ rws = ["return", "continue", "raise", "new", "self", "let", "in", "replace", "wi
 identifier :: Parser String
 identifier = (lexeme . try) (p >>= check)
  where
-   p       = (:) <$> letterChar <*> many alphaNumChar
+   p       = (:) <$> letterChar <*> many (alphaNumChar <|> char '.')
    check x =
      if x `elem` rws
      then fail $ "keyword " ++ show x ++ " cannot be an identifier"
@@ -98,7 +98,6 @@ data EAction = EReturn EValue
   | EReceive Role Choices
   | EWait Role
   | EDisconnect Role
-  | ECondition EAction Computation Computation
   | EEquality EValue EValue
   | EInequality EValue EValue
   deriving (Show)
@@ -107,6 +106,7 @@ data Computation = EAssign Binder Computation Computation
   | ETry EAction Computation
   | ERecursion Label Computation
   | EAct EAction
+  | ECondition EValue Computation Computation
   | ESequence Computation Computation
   deriving (Show)
 -- Session Actions
@@ -167,6 +167,7 @@ pVBoolFalse :: Parser EValue
 pVBoolFalse = do
   string' "false" *> notFollowedBy alphaNumChar *> sc
   return $ EBool False
+
 
 pValue :: Parser EValue
 pValue = choice
@@ -364,17 +365,6 @@ pInequality = try $ do
 pCompare :: Parser EAction
 pCompare = pInequality <|> pEquality
 
-pCondition :: Parser EAction
-pCondition = do
-  reserved "if"
-  val <- parens pCompare
-  reserved "then"
-  comp1 <- braces pComputation
-  reserved "else"
-  comp2 <- braces pComputation
-  return $ ECondition val comp1 comp2
-
-
 
 
 pAction :: Parser EAction
@@ -392,7 +382,7 @@ pAction = choice
   , pReceive
   , pWait
   , pDisconnect
-  , pCondition
+  , pCompare
   ]
 
 
@@ -422,8 +412,20 @@ pRecursion = try $ do
   computation <- pComputation
   return $ ERecursion label computation
 
+
+pCondition :: Parser Computation
+pCondition = do
+  reserved "if"
+  val <- parens pValue
+  reserved "then"
+  comp1 <- braces pComputation
+  reserved "else"
+  comp2 <- braces pComputation
+  return $ ECondition val comp1 comp2
+
 pAct :: Parser Computation
 pAct = EAct <$> pAction
+
 
 pSequence :: Parser Computation
 pSequence = try $ do
@@ -437,7 +439,9 @@ pNonseqComputation = choice
   [ pAssign
   , pTry
   , pRecursion
-  , pAct ]
+  , pAct
+  , pCondition
+  ]
 
 pComputation :: Parser Computation
 pComputation = choice
