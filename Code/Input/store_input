@@ -1,0 +1,70 @@
+type Customer = Store !! login(String) . rec browse .
+                                (Store ! item(String) . Store ? price(Int) . browse)
+                              + (Store ! buy(String) . Store ! address(String) . Store ? ref(Int). #Store. end)
+                              + (Store ! quit(Unit) . #Store . end)
+type Store = Customer ?? login(String) . rec browse .
+                               (Customer ? item(String) . Customer ! price(Int) . browse)
+                             + (Customer ? buy(String) . Customer ? address(String) . Courier !! deliver(String) .  Courier ? ref(Int) . #Courier . Customer ! ref(Int) . ##Customer)
+                             + (Customer ? quit(Unit) . ##Customer)
+type Courier = Store ?? deliver(String) . Store ! ref(Int) . ##Store
+
+actor Customer1 follows (Customer) {
+    let pid <= discover Store in
+    connect login("credentials") to pid as Store;
+    browse ::
+      send item("COVID kit") to Store;
+      receive price(x) from Store;
+      continue browse }
+actor Customer2 follows (Customer) {
+    let pid <= discover Store in
+    connect login("credentials") to pid as Store;
+    browse ::
+      send buy("COVID kit") to Store;
+      send address("Kelvinhaugh Street") to Store;
+      receive ref(x) from Store;
+      wait Store }
+
+actor Customer3 follows (Customer) {
+    let pid <= discover Store in
+    connect login("credentials") to pid as Store;
+    browse ::
+      send quit(()) to Store;
+      wait Store
+}
+
+actor StoreActor follows (Store) {
+	accept login(credentials) from Customer;
+	browse ::
+	  receive from Customer {
+	    item(itemName) ->
+	      send price(20) to Customer;
+	      continue browse
+	    buy(item) ->
+        receive address(addr) from Customer;
+	      let pid <= discover Courier in
+	      connect deliver(addr) to pid as Courier;
+	      receive ref(x) from Courier;
+	      wait Courier;
+	      send ref(x) to Customer;
+	      disconnect from Customer
+	    quit(x) -> disconnect from Customer
+	  }
+}
+
+
+actor CourierActor follows (Courier) {
+    accept deliver(addr) from Store;
+    send ref(100) to Store;
+    disconnect from Store }
+
+Store : Store
+Customer : Customer
+Courier : Courier
+
+boot{
+    new StoreActor;
+    new CourierActor;
+    new Customer1;
+    new Customer2;
+    new Customer3
+}

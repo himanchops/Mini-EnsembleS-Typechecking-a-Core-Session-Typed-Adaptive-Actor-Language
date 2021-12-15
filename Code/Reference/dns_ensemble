@@ -1,0 +1,61 @@
+type Iclient is interface(
+ out{RootServer,string} RootServer_stringOut,
+ in {RootServer,string} RootServer_stringIn,
+ out{ZoneServer,string} ZoneServer_stringOut,
+ in {ZoneServer,string} ZoneServer_stringIn,
+ in {ZoneServer,choice_enum} ZoneServer_choiceIn,
+ in {RootServer,choice_enum} RootServer_choiceIn)
+
+type choice_enum is
+ enum(TLDResponse,PartialResolution,
+ InvalidDomain,ResolutionComplete,
+ InvalidTLD)
+
+query find_name(string n){ $name == n; }
+
+actor c presents Iclient
+ follows Client {
+  dom_name = "nii.ac.jp";
+  constructor() { }
+  behaviour{
+   rootQuery = find_name("jp");
+   // Find Root Server
+   root_s =
+   discover(IServer, RootServer, rootQuery);
+   // search until root_s non-empty
+   link me with root_s[0];
+   send domain_name on RootServer_stringOut;
+   receive c_msg from RootServer_choiceIn;
+   switch(c_msg){
+    case TLDResponse:
+     receive ZoneServerAddr_msg
+     from RootServer_stringIn;
+    unlink RootServer;
+ while(true) Lookup : {
+ // Find ZoneServer
+ zone_s = discover(IServer, ZoneServer, find_name(ZoneServerAddr_msg));
+ link me with zone_s[0];
+// Ask ZoneServer
+ send dom_name on ZoneServer_stringOut;
+ receive c_msg2 from ZoneServer_choiceIn;
+ switch(c_msg2){
+  case PartialResolution:
+   receive str_msg from ZoneServer_stringIn;
+   ZoneServerAddr_msg := str_msg;
+   unlink ZoneServer;
+   continue Lookup;
+  case InvalidDomain:
+   receive str_msg from ZoneServer_stringIn;
+   unlink ZoneServer;
+   break;
+  case ResolutionComplete:
+   receive str_msg from ZoneServer_stringIn;
+   unlink ZoneServer;
+   break Lookup;
+  }
+  // keep looking
+ }
+ case InvalidTLD:
+  receive str_msg from RootServer_stringIn;
+  unlink RootServer;
+} } }

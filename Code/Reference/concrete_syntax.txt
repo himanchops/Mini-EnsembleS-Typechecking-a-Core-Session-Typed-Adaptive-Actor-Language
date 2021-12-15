@@ -1,0 +1,68 @@
+##CONCRETE SYNTAX
+
+#TYPE
+Pid(<sessionType>) | string | int | bool | unit
+
+#Values
+<var> | "string" | <int> | true/false (bool)
+
+#ACTOR DEFINITION
+actor <actorName> follows (<sessionType>) {<computation>}
+
+#ACTIONS
+return <value>
+continue <label>
+raise
+new <actorName>
+self
+replace <value> with <behaviour>
+discover <sessionType>
+connect <label>(<value>) to <value> as <role>
+send <label>(<value>) to <role>
+receive from <role> { case <label>(<value>) -> <computation> .. }
+receive <label><value> from <role>; <computation>
+accept from <role> { case <label>(<value>) -> <computation> .. }
+accept <label><value> from <role>; <computation>
+wait <role>
+disconnect from <role>
+<value> == <value>
+<value> /= <value>
+
+
+#COMPUTATION
+let <binder> <= <compuation> in <compuation>
+comp1; comp2
+try <action> catch <compuation>
+if <action> then <computation> else <computation>
+<label> :: <computation>
+<action>
+
+
+#SESSION ACTIONS
+<role> ! <label>(<type>)
+<role> !! <label>(<type>)
+<role> ? <label>(<type>)
+<role> ?? <label>(<type>)
+#<role>							//wait
+
+#SESSION TYPE
+<sessionAction> . <SessionType>
+(<sessionAction> . <SessionType>) + .. + (<sessionAction> . <SessionType>)
+rec X.S
+X								// Small-case
+##<role>							// disconnect
+end
+<sessionTypeIdentifier>					// Capitalized
+
+
+#TYPE IDENTIFIER
+type <SessionTypeName> = <SessionType>
+
+#Protocol
+<role> : <sessionType>
+
+#Program
+[TypeIdentifier]
+[ActorDefinitions]
+[Protocols]
+boot { <computation> }

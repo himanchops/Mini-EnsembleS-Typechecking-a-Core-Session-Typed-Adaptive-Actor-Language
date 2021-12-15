@@ -1,0 +1,19 @@
+type PongerSession = Pinger ?? ping(Unit) . Pinger ! pong(Unit) . ##Pinger
+type PingerSession = Ponger !! ping(Unit) . Ponger ? pong(Unit) . #Ponger . end
+actor PingerActor follows (PingerSession) {
+    let pid <= discover PongerSession in
+    connect ping(()) to pid as Ponger;
+    receive from Ponger {
+        pong(x) -> wait Ponger
+    }
+}
+actor PongerActor follows (PongerSession) {
+    accept from Pinger {
+        ping(x) ->
+            send pong(()) to Pinger;
+            disconnect from Pinger
+    }
+}
+Pinger : PingerSession
+Ponger : PongerSession
+boot { new PingerActor; new PongerActor }

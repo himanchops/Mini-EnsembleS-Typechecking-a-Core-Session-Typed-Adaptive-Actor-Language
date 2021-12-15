@@ -1,0 +1,66 @@
+type RootSession = Client ?? RootRequest(String) . (Client ! TLDResponse(Pid(ZoneSession)) . ##Client) +
+                                                   (Client ! InvalidTLD(String) . ##Client)
+type ZoneSession = Client ?? ResolutionRequest(String) . (Client ! PartialResolution(Pid(ZoneSession)) . ##Client) + (Client ! InvalidDomain(String) . ##Client) + (Client ! ResolutionComplete(String) . ##Client)
+type ClientSession = Root !! RootRequest(String) . (Root ? InvalidTLD(String) . #Root . end) + (Root ? TLDResponse(Pid(ZoneSession)) . #Root . ZS !! ResolutionRequest(String) . rec lookup . (ZS ? PartialResolution(Pid(ZoneSession)) . #ZS . ZS !! ResolutionRequest(String) . lookup) +  (ZS ? InvalidDomain(String) . #ZS . end) + (ZS ? ResolutionComplete(String) . #ZS . end))
+
+actor Client follows (ClientSession) {
+  let rootServer <= discover RootSession in
+  connect RootRequest("uk") to rootServer as Root;
+  receive from Root {
+    TLDResponse(zoneServerAddr) ->
+      wait Root;
+      connect ResolutionRequest("www.gla.ac.uk") to zoneServerAddr as ZS;
+      lookup ::
+        receive from ZS {
+          PartialResolution(pidZS) ->
+            wait ZS;
+            connect ResolutionRequest("www.gla.ac.uk") to pidZS as ZS; 
+            continue lookup
+          InvalidDomain(invalidString) ->
+            wait ZS
+          ResolutionComplete(ipAddress) ->
+            wait ZS
+        }
+    InvalidTLD(invalidString) ->
+      wait Root
+  }
+}
+
+actor RootServer follows (RootSession) {
+  accept from Client {
+    RootRequest(ext) ->
+      let val <= ext == "uk" in
+      if (val) then {
+        let zoneServerAddr <= discover ZoneSession in
+        send TLDResponse(zoneServerAddr) to Client;
+        disconnect from Client
+      }
+      else {
+        send InvalidTLD("Invalid domain name") to Client;
+        disconnect from Client
+      }
+  }
+}
+
+actor ZoneServer follows (ZoneSession) {
+  accept ResolutionRequest(domainName) from Client;
+  let val <= domainName == "www.gla.ac.uk" in
+  if (val) then {
+    send ResolutionComplete("192.158.1.38") to Client;
+    disconnect from Client
+  }
+  else {
+    send InvalidDomain("Invalid domain name") to Client;
+    disconnect from Client
+  }
+}
+
+Root : RootSession
+ZS : ZoneSession
+Client : ClientSession
+
+boot {
+  new RootServer;
+  new ZoneServer;
+  new Client
+}
